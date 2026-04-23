@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from em3d.gamma0 import cross, sequential_chain, compute_circle_three_points, smallest_enclosing_circle
+from em3d.gamma0 import cross, sequential_chain, compute_circle_three_points, smallest_enclosing_circle, find_params
 
 
 def test_cross_positive():
@@ -49,3 +49,20 @@ def test_smallest_enclosing_circle_triangle():
     assert r < 1.5  # sanity: circle fits the triangle
     for p in pts:
         assert np.linalg.norm(p - np.array([cx, cy])) <= r + 1e-12
+
+
+def test_find_params_returns_mu_and_radius():
+    # samples from a known half-disk: eigenvalues in [1, 1+eps] on complex plane
+    samples = np.array([1.0 + 0j, 1.5 + 0.5j, 1.5 - 0.5j, 2.0 + 0j])
+    params = find_params(samples)
+    assert set(params.keys()) == {"mu", "radius"}
+    assert params["mu"].real > 0
+    assert params["radius"] > 0
+
+
+def test_find_params_unit_circle():
+    # uniform samples on the unit circle + 1 (spectrum of an identity-like operator)
+    theta = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    samples = 1.0 + np.exp(1j * theta)
+    params = find_params(samples)
+    assert abs(params["radius"] - 1.0) < 1e-6

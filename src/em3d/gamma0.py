@@ -99,3 +99,17 @@ def smallest_enclosing_circle(points: np.ndarray):
                         if not in_circle(cx, cy, r, s):
                             cx, cy, r = circle_from_3(p, q, s)
     return cx, cy, r
+
+
+def find_params(samples) -> dict:
+    """Find the optimal iteration parameter μ and bounding radius for the spectrum samples.
+
+    `samples`: 1-D complex array of eigenvalue approximations.
+    Returns dict with keys 'mu' (complex) and 'radius' (float).
+    Uses the convex hull of the real (Re, Im) representation, then smallest enclosing circle
+    of hull vertices.
+    """
+    pts = np.column_stack([np.real(samples), np.imag(samples)])
+    hull = sequential_chain(pts)
+    cx, cy, radius = smallest_enclosing_circle(hull if len(hull) >= 2 else pts)
+    return {"mu": complex(cx, cy), "radius": float(radius)}

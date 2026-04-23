@@ -86,8 +86,18 @@ def test_fft_matvec_matches_dense(backend_numpy_double):
     assert rel < 1e-10, f"FFT vs dense relative error {rel:.2e}"
 
 
+def _toy_problem_lossy(backend, N=(4, 4, 4)):
+    """Lossy medium (eps_imag=0.5) so that the operator is not accidentally self-adjoint."""
+    grid = Grid(N=N, L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=backend)
+    scalar = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.5, radius=0.3, axis="z")
+    eta = apply_refraction(grid, scalar_eta=scalar)
+    wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
+    volume = grid.dv * int(np.prod(N))
+    return Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=volume)
+
+
 def test_fft_rmatvec_matches_dense_adjoint(backend_numpy_double):
-    problem = _toy_problem(backend_numpy_double, N=(4, 4, 4))
+    problem = _toy_problem_lossy(backend_numpy_double, N=(4, 4, 4))
     op = Operator(problem)
     M_dense = op.to_dense()
     rng = np.random.default_rng(7)

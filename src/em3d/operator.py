@@ -1,9 +1,6 @@
 """FFT-accelerated volume-integral operator on a doubled parallelepiped Π₂."""
 from __future__ import annotations
 
-import numpy as np
-
-from .backend import Backend
 from .grid import Grid
 
 
@@ -13,6 +10,7 @@ def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
     The (a, b) block is an isotropic scalar kernel ⋅ δ_{ab} in this minimal version.
     Anisotropic refinements can hook in here; they are not needed for the FFT-vs-dense
     integration test because the dense matrix is assembled consistently.
+    `volume` is accepted for API symmetry but unused; cell volume is taken from grid.dv.
     """
     be = grid.backend
     xp = be.xp

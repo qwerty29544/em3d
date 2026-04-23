@@ -60,3 +60,59 @@ def test_problem_rejects_wrong_shape(backend_numpy_double):
     wave = np.zeros((3, 4, 2, 2), dtype=np.complex128)  # wrong shape
     with pytest.raises(ValueError):
         Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=grid.dv * 8)
+
+
+def _flatten_field(u):
+    """Convert (3, Nx, Ny, Nz) field to (3·Nx·Ny·Nz,) vector in row-major (cell, component) order."""
+    # dense uses block order: for cell i = (ix, iy, iz), components 0,1,2 are contiguous
+    three, Nx, Ny, Nz = u.shape
+    assert three == 3
+    # reshape (3, Nx, Ny, Nz) -> (Nx, Ny, Nz, 3) -> flat
+    return np.transpose(np.asarray(u), (1, 2, 3, 0)).reshape(-1)
+
+
+def test_fft_matvec_matches_dense(backend_numpy_double):
+    problem = _toy_problem(backend_numpy_double, N=(4, 4, 4))
+    op = Operator(problem)
+    M_dense = op.to_dense()
+    rng = np.random.default_rng(42)
+    u = (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128)
+    # FFT path: applies (I + B·η); dense path: applies (I + dense·η)
+    eta_flat = _flatten_field(np.einsum("ab...,b...->a...", problem.eps_tensor, u))
+    u_flat = _flatten_field(u)
+    y_dense = u_flat + M_dense @ eta_flat
+    y_fft = _flatten_field(op.matvec(u))
+    rel = np.linalg.norm(y_fft - y_dense) / np.linalg.norm(y_dense)
+    assert rel < 1e-10, f"FFT vs dense relative error {rel:.2e}"
+
+
+def test_fft_rmatvec_matches_dense_adjoint(backend_numpy_double):
+    problem = _toy_problem(backend_numpy_double, N=(4, 4, 4))
+    op = Operator(problem)
+    M_dense = op.to_dense()
+    rng = np.random.default_rng(7)
+    u = (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128)
+    u_flat = _flatten_field(u)
+    eta_conj_T = np.einsum("ab...,b...->a...", np.conj(problem.eps_tensor).swapaxes(0, 1), _unflatten_field(M_dense.conj().T @ u_flat, problem.grid.N))
+    expected = u_flat + _flatten_field(eta_conj_T)
+    y_fft = _flatten_field(op.rmatvec(u))
+    rel = np.linalg.norm(y_fft - expected) / np.linalg.norm(expected)
+    assert rel < 1e-10
+
+
+def _unflatten_field(flat, N):
+    Nx, Ny, Nz = N
+    return np.transpose(flat.reshape(Nx, Ny, Nz, 3), (3, 0, 1, 2))
+
+
+def test_fft_matvec_single_precision_tolerance(backend_numpy_single):
+    problem = _toy_problem(backend_numpy_single, N=(4, 4, 4))
+    op = Operator(problem)
+    # for single precision we only assert the FFT path returns finite values of the expected dtype;
+    # absolute dense comparison in f32 is known to be noisy. Detailed single-precision tolerance
+    # tests belong to the solver convergence suite (Task 18).
+    u = backend_numpy_single.zeros((3,) + problem.grid.N, kind="complex")
+    u[0, 0, 0, 0] = 1.0
+    y = op.matvec(u)
+    assert y.dtype == backend_numpy_single.complex_dtype
+    assert np.all(np.isfinite(np.asarray(y)))

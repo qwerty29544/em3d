@@ -22,7 +22,9 @@ def flat_wave_vec(
     """
     be = grid.backend
     xp = be.xp
-    norm2 = orient[0] ** 2 + orient[1] ** 2 + orient[2] ** 2
+    if sign not in (1, -1):
+        raise ValueError(f"sign must be 1 or -1, got {sign!r}")
+    norm2 = float(orient[0]) ** 2 + float(orient[1]) ** 2 + float(orient[2]) ** 2
     if abs(norm2 - 1.0) > 1e-9:
         raise ValueError(f"orient must be a unit vector, got norm² = {norm2}")
     X, Y, Z = grid.coords()

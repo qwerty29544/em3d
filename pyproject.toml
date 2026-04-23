@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "em3d"
+version = "0.1.0"
+description = "Volume integral equation solver for 3D electrodynamics on structured grids with FFT acceleration."
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "scipy>=1.11"]
+
+[project.optional-dependencies]
+gpu = ["cupy-cuda12x>=13"]
+dev = ["pytest>=8", "pytest-xdist>=3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+em3d = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: requires CUDA-capable device and cupy",
+]

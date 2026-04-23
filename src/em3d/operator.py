@@ -91,6 +91,7 @@ class Operator:
         be = grid.backend
         self._K_hat = prep_coeffs_em3d(grid, k=problem.k0, volume=problem.volume)
         self._K_hat_conj = prep_conj_coeffs_em3d(grid, k=problem.k0, volume=problem.volume)
+        self._eta_conj_T = be.xp.conj(problem.eps_tensor).swapaxes(0, 1)
         self._be = be
         self._N = grid.N
 
@@ -122,7 +123,7 @@ class Operator:
         applied_hat = _apply_block_kernel(xp, self._K_hat_conj, hat)
         applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
         B_star_u = _crop_from_doubled(applied_big, self._N)
-        eta_star_B_star_u = xp.einsum("ab...,b...->a...", xp.conj(eta).swapaxes(0, 1), B_star_u)
+        eta_star_B_star_u = xp.einsum("ab...,b...->a...", self._eta_conj_T, B_star_u)
         return (u + eta_star_B_star_u).astype(be.complex_dtype, copy=False)
 
     def to_dense(self):

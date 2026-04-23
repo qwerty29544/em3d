@@ -47,3 +47,88 @@ def prep_conj_coeffs_em3d(grid: Grid, *, k: float, volume: float):
     kernel_tensor = _kernel_tensor_on_doubled_grid(grid, k=k, volume=volume)
     conj = be.xp.conj(kernel_tensor)
     return be.fftn(conj, axes=(-3, -2, -1)).astype(be.complex_dtype, copy=False)
+
+
+from .problem import Problem
+
+
+def _pad_to_doubled(xp, u, N):
+    """Zero-pad a (3, Nx, Ny, Nz) field to (3, 2Nx, 2Ny, 2Nz)."""
+    Nx, Ny, Nz = N
+    shape = (3, 2 * Nx, 2 * Ny, 2 * Nz)
+    out = xp.zeros(shape, dtype=u.dtype)
+    out[:, :Nx, :Ny, :Nz] = u
+    return out
+
+
+def _crop_from_doubled(u_big, N):
+    """Extract (3, Nx, Ny, Nz) from (3, 2Nx, 2Ny, 2Nz)."""
+    Nx, Ny, Nz = N
+    return u_big[:, :Nx, :Ny, :Nz]
+
+
+def _apply_block_kernel(xp, K_hat, u_hat):
+    """Apply the (3, 3) block kernel in Fourier space: out[a] = Σ_b K_hat[a,b] * u_hat[b]."""
+    out = xp.zeros_like(u_hat)
+    for a in range(3):
+        acc = None
+        for b in range(3):
+            term = K_hat[a, b] * u_hat[b]
+            acc = term if acc is None else acc + term
+        out[a] = acc
+    return out
+
+
+class Operator:
+    """FFT-backed volume integral operator with matvec and rmatvec.
+
+    Caches the precomputed kernel FFTs in the constructor.
+    """
+
+    def __init__(self, problem: Problem):
+        self.problem = problem
+        grid = problem.grid
+        be = grid.backend
+        self._K_hat = prep_coeffs_em3d(grid, k=problem.k0, volume=problem.volume)
+        self._K_hat_conj = prep_conj_coeffs_em3d(grid, k=problem.k0, volume=problem.volume)
+        self._be = be
+        self._N = grid.N
+
+    @property
+    def backend(self):
+        return self._be
+
+    def matvec(self, u):
+        """y = (I + B·η) u.  Accepts (3, Nx, Ny, Nz), returns same shape."""
+        be = self._be
+        xp = be.xp
+        eta = self.problem.eps_tensor
+        # apply η (3×3 tensor contraction on each cell)
+        eta_u = xp.einsum("ab...,b...->a...", eta, u)
+        padded = _pad_to_doubled(xp, eta_u, self._N)
+        hat = be.fftn(padded, axes=(-3, -2, -1))
+        applied_hat = _apply_block_kernel(xp, self._K_hat, hat)
+        applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
+        B_eta_u = _crop_from_doubled(applied_big, self._N)
+        return (u + B_eta_u).astype(be.complex_dtype, copy=False)
+
+    def rmatvec(self, u):
+        """y = (I + η* · B*) u  — adjoint in the same inner product as the notebook."""
+        be = self._be
+        xp = be.xp
+        eta = self.problem.eps_tensor
+        padded = _pad_to_doubled(xp, u, self._N)
+        hat = be.fftn(padded, axes=(-3, -2, -1))
+        applied_hat = _apply_block_kernel(xp, self._K_hat_conj, hat)
+        applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
+        B_star_u = _crop_from_doubled(applied_big, self._N)
+        eta_star_B_star_u = xp.einsum("ab...,b...->a...", xp.conj(eta).swapaxes(0, 1), B_star_u)
+        return (u + eta_star_B_star_u).astype(be.complex_dtype, copy=False)
+
+    def to_dense(self):
+        """Dense assembly; requires numpy backend."""
+        import numpy as _np
+        if self._be.xp is not _np:
+            raise RuntimeError("Operator.to_dense requires numpy backend")
+        from .dense import B_operator_matrix
+        return B_operator_matrix(self.problem.grid, k=self.problem.k0, volume=self.problem.volume)

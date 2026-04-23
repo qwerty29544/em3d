@@ -34,6 +34,8 @@ def B_operator_matrix(grid: Grid, *, k: float, volume: float) -> np.ndarray:
 
     Uses scalar b_coeff and a block-diagonal 3×3 identity per cell pair (isotropic
     kernel, as in the notebook's `B_operator_matrix` without ε multiplication).
+    `volume` is accepted for API symmetry with the FFT operator but is unused here;
+    cell volume is always taken from grid.dv.
     """
     centres = _cell_centres(grid)
     Ncells = centres.shape[0]

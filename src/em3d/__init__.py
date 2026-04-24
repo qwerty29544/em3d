@@ -1,4 +1,10 @@
-"""em3d: volume-integral-equation solver for 3D electrodynamics on structured grids."""
+"""em3d: volume-integral-equation solver for 3D electrodynamics on structured grids.
+
+Public API is defined by ``__all__`` below.  The sub-modules ``em3d.kernel``,
+``em3d.dense``, and the helper ``em3d.operator.prep_coeffs_em3d`` are
+intentionally *not* re-exported here — they are implementation details used
+only by integration tests and internal operator assembly.
+"""
 from __future__ import annotations
 
 from .backend import Backend

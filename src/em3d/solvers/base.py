@@ -7,11 +7,18 @@ from typing import Any, List, Optional, Protocol
 
 @dataclass
 class SolverConfig:
+    """Configuration shared by all iterative solvers.
+
+    `mu` and `radius` are consumed only by :class:`SIM` (they encode the γ₀
+    iteration parameter computed by :func:`em3d.gamma0.find_params`).
+    :class:`BiCGStab` and :class:`TwoStep` silently ignore these fields.
+    """
+
     max_iter: int = 200
     rtol: float = 1e-6
     log: bool = False
-    mu: Optional[complex] = None     # γ₀ centre for SIM
-    radius: Optional[float] = None   # γ₀ radius for SIM
+    mu: Optional[complex] = None     # γ₀ centre — SIM only
+    radius: Optional[float] = None   # γ₀ radius — SIM only
 
     def require_gamma(self) -> None:
         if self.mu is None or self.radius is None:

@@ -8,6 +8,7 @@ from em3d.problem import Problem
 from em3d.operator import Operator
 from em3d.solvers.base import SolverConfig, SolverResult
 from em3d.solvers.sim import SIM
+from em3d.solvers.bicgstab import BiCGStab
 
 
 def test_solver_config_defaults():
@@ -48,3 +49,18 @@ def test_sim_converges_backend_agnostic(backend_numpy_double):
     assert result.converged, f"SIM did not converge, residuals: {result.residual_history[-5:]}"
     err = np.linalg.norm(np.asarray(result.u) - np.asarray(u_true)) / np.linalg.norm(np.asarray(u_true))
     assert err < 1e-6, f"SIM reconstructed u to {err:.2e}, expected < 1e-6"
+
+
+def test_bicgstab_converges(backend_numpy_double):
+    problem = _toy_problem_for_solver(backend_numpy_double)
+    op = Operator(problem)
+    rng = np.random.default_rng(1)
+    u_true = backend_numpy_double.array(
+        (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128) * 0.1
+    )
+    rhs = op.matvec(u_true)
+    cfg = SolverConfig(max_iter=200, rtol=1e-8)
+    result = BiCGStab(cfg).solve(op, rhs)
+    assert result.converged, f"BiCGStab did not converge, residuals: {result.residual_history[-5:]}"
+    err = np.linalg.norm(np.asarray(result.u) - np.asarray(u_true)) / np.linalg.norm(np.asarray(u_true))
+    assert err < 1e-6

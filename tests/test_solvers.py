@@ -9,6 +9,7 @@ from em3d.operator import Operator
 from em3d.solvers.base import SolverConfig, SolverResult
 from em3d.solvers.sim import SIM
 from em3d.solvers.bicgstab import BiCGStab
+from em3d.solvers.twostep import TwoStep
 
 
 def test_solver_config_defaults():
@@ -62,5 +63,20 @@ def test_bicgstab_converges(backend_numpy_double):
     cfg = SolverConfig(max_iter=200, rtol=1e-8)
     result = BiCGStab(cfg).solve(op, rhs)
     assert result.converged, f"BiCGStab did not converge, residuals: {result.residual_history[-5:]}"
+    err = np.linalg.norm(np.asarray(result.u) - np.asarray(u_true)) / np.linalg.norm(np.asarray(u_true))
+    assert err < 1e-6
+
+
+def test_twostep_converges(backend_numpy_double):
+    problem = _toy_problem_for_solver(backend_numpy_double)
+    op = Operator(problem)
+    rng = np.random.default_rng(2)
+    u_true = backend_numpy_double.array(
+        (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128) * 0.1
+    )
+    rhs = op.matvec(u_true)
+    cfg = SolverConfig(max_iter=300, rtol=1e-8)
+    result = TwoStep(cfg).solve(op, rhs)
+    assert result.converged, f"TwoStep did not converge, residuals: {result.residual_history[-5:]}"
     err = np.linalg.norm(np.asarray(result.u) - np.asarray(u_true)) / np.linalg.norm(np.asarray(u_true))
     assert err < 1e-6

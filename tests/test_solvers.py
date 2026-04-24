@@ -80,3 +80,37 @@ def test_twostep_converges(backend_numpy_double):
     assert result.converged, f"TwoStep did not converge, residuals: {result.residual_history[-5:]}"
     err = np.linalg.norm(np.asarray(result.u) - np.asarray(u_true)) / np.linalg.norm(np.asarray(u_true))
     assert err < 1e-6
+
+
+SOLVERS = [
+    ("SIM", lambda: SIM(SolverConfig(max_iter=500, rtol=1e-6, mu=complex(1.0), radius=0.05))),
+    ("BiCGStab", lambda: BiCGStab(SolverConfig(max_iter=200, rtol=1e-6))),
+    ("TwoStep", lambda: TwoStep(SolverConfig(max_iter=300, rtol=1e-6))),
+]
+
+
+@pytest.mark.parametrize("solver_name,solver_factory", SOLVERS)
+def test_solvers_converge_double(solver_name, solver_factory, backend_numpy_double):
+    problem = _toy_problem_for_solver(backend_numpy_double)
+    op = Operator(problem)
+    rng = np.random.default_rng(hash(solver_name) & 0xFFFF)
+    u_true = backend_numpy_double.array(
+        (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128) * 0.05
+    )
+    rhs = op.matvec(u_true)
+    result = solver_factory().solve(op, rhs)
+    assert result.converged, f"{solver_name} did not converge"
+
+
+@pytest.mark.parametrize("solver_name,solver_factory", SOLVERS)
+def test_solvers_converge_single(solver_name, solver_factory, backend_numpy_single):
+    problem = _toy_problem_for_solver(backend_numpy_single)
+    op = Operator(problem)
+    rng = np.random.default_rng((hash(solver_name) + 1) & 0xFFFF)
+    u_true_double = (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)) * 0.05
+    u_true = backend_numpy_single.array(u_true_double.astype(np.complex64))
+    rhs = op.matvec(u_true)
+    result = solver_factory().solve(op, rhs)
+    # f32 single precision: looser convergence threshold
+    final_rel = result.residual_history[-1] if result.residual_history else float("inf")
+    assert final_rel < 5e-4, f"{solver_name}@single: final residual {final_rel:.2e} too large"

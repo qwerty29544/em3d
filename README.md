@@ -1,63 +1,61 @@
 # em3d
 
-**Volume-integral-equation solver for 3-D electrodynamics on structured Cartesian grids with FFT acceleration.**
+**Решатель объёмного интегрального уравнения (ОИУ) для трёхмерной электродинамики на структурированных декартовых сетках с БПФ-ускорением.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## Overview
+## Обзор
 
-`em3d` solves the volume integral equation (VIE) of 3-D electromagnetic scattering:
+Пакет `em3d` решает объёмное интегральное уравнение (ОИУ) задачи рассеяния ЭМ-волн на трёхмерной диэлектрической структуре:
 
-```
-(I + B·η) u = f
-```
+$$(\mathbf{I} + \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
 
-| Symbol | Meaning |
-|--------|---------|
-| **u**(r) | scattered electric field inside the dielectric |
-| **f**(r) | incident plane wave |
-| η(r) = ε(r) − I | dielectric contrast tensor |
-| **B** | volume-integral operator with Helmholtz Green's function G(R) = exp(ikR) / (4πR) |
+| Символ | Смысл |
+|--------|-------|
+| $\mathbf{u}(\mathbf{r})$ | рассеянное электрическое поле внутри рассеивателя |
+| $\mathbf{f}(\mathbf{r})$ | падающая плоская волна |
+| $\boldsymbol{\eta}(\mathbf{r}) = \boldsymbol{\varepsilon}(\mathbf{r}) - \mathbf{I}$ | тензор диэлектрического контраста |
+| $\mathbf{B}$ | оператор объёмного интеграла с функцией Грина Гельмгольца $G(R) = \dfrac{e^{ik_0 R}}{4\pi R}$ |
 
-The operator **B** is applied as an FFT convolution on the **doubled parallelepiped Π₂**, which eliminates wrap-around artefacts and gives **O(N log N)** cost per iteration.
+Оператор $\mathbf{B}$ применяется как БПФ-свёртка на **удвоенном параллелепипеде $\Pi_2$**, что устраняет артефакты периодизации и даёт сложность $\mathcal{O}(N \log N)$ на итерацию.
 
 ---
 
-## Features
+## Возможности
 
-- **FFT matvec** — doubled-grid Π₂ Toeplitz convolution; no dense matrix stored.
-- **Three iterative solvers** — SIM/MSGD, BiCGStab, TwoStep gradient descent.
-- **γ₀ parameter** — optimal iteration parameter via convex hull + smallest enclosing circle of the operator spectrum.
-- **Dual backend** — NumPy (CPU) and CuPy (CUDA GPU) with identical API.
-- **Dual precision** — `float64/complex128` (double) and `float32/complex64` (single).
-- **Typed** — PEP 561 `py.typed` marker, fully annotated public API.
+- **БПФ-матвек** — тёплицева свёртка на $\Pi_2$; плотная матрица не хранится.
+- **Три итерационных метода** — SIM/MSGD, BiCGStab, двухшаговый градиентный спуск.
+- **Параметр $\gamma_0$** — оптимальный итерационный параметр через выпуклую оболочку и наименьшую описанную окружность выборки спектра.
+- **Два бэкенда** — NumPy (CPU) и CuPy (GPU/CUDA) с единым API.
+- **Две точности** — `float64/complex128` (двойная) и `float32/complex64` (одинарная).
+- **Типизирован** — маркер `py.typed` (PEP 561), аннотированный публичный API.
 
 ---
 
-## Installation
+## Установка
 
-### Stable release (v0.1.0) from GitHub
+### Стабильная версия (v0.1.0) с GitHub
 
 ```bash
 pip install git+https://github.com/qwerty29544/em3d.git@v0.1.0
 ```
 
-### Latest development version
+### Последняя версия (main)
 
 ```bash
 pip install git+https://github.com/qwerty29544/em3d.git
 ```
 
-### With GPU support (requires CUDA 12 and CuPy)
+### С поддержкой GPU (требует CUDA 12 и CuPy)
 
 ```bash
 pip install "git+https://github.com/qwerty29544/em3d.git@v0.1.0[gpu]"
 ```
 
-### Local editable install (for development)
+### Локальная установка для разработки
 
 ```bash
 git clone https://github.com/qwerty29544/em3d.git
@@ -67,181 +65,189 @@ pip install -e ".[dev]"
 
 ---
 
-## Quick start
+## Быстрый старт
 
 ```python
 import numpy as np
 import em3d
 
-# ── 1. Backend and grid ────────────────────────────────────────────────────
+# ── 1. Бэкенд и сетка ─────────────────────────────────────────────────────
 be   = em3d.Backend.numpy(em3d.Precision.DOUBLE)
 grid = em3d.Grid(N=(16, 16, 16), L=(1.0, 1.0, 1.0),
                  center=(0.0, 0.0, 0.0), backend=be)
 
-# ── 2. Dielectric cylinder along z (ε_r = 2, no absorption) ───────────────
+# ── 2. Диэлектрический цилиндр вдоль z (ε_r = 2, без поглощения) ─────────
 scalar_eta = em3d.cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0,
                                        radius=0.3, axis="z")
 eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
 
-# ── 3. Incident plane wave (E ∥ x̂, propagation along ẑ, k₀ = 1) ──────────
+# ── 3. Падающая волна (E ∥ x̂, распространение вдоль ẑ, k₀ = 1) ──────────
 wave = em3d.flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
 
-# ── 4. Assemble problem and operator ──────────────────────────────────────
+# ── 4. Задача и оператор ──────────────────────────────────────────────────
 problem = em3d.Problem(grid=grid, eps_tensor=eps_tensor,
                        wave=wave, k0=1.0, volume=grid.dv * 16**3)
 op = em3d.Operator(problem)
 
-# ── 5. Solve with BiCGStab (no extra parameters needed) ───────────────────
+# ── 5. Решение методом BiCGStab ───────────────────────────────────────────
 cfg    = em3d.SolverConfig(max_iter=500, rtol=1e-8)
 result = em3d.BiCGStab(cfg).solve(op, wave)
 
-print(f"Converged: {result.converged}  iterations: {result.iterations}")
-u = np.asarray(result.u)   # shape (3, 16, 16, 16), complex128
+print(f"Сошлось: {result.converged}  итераций: {result.iterations}")
+u = np.asarray(result.u)   # форма (3, 16, 16, 16), complex128
 ```
 
-### Using SIM with optimal γ₀
+### SIM с оптимальным параметром $\gamma_0$
 
 ```python
-# Sample a few diagonal eigenvalue estimates of B·η
 import em3d.gamma0 as g0
 
-rng    = np.random.default_rng(0)
-probes = [be.array(rng.standard_normal((3,) + grid.N).astype(np.complex128))]
+# Берём несколько значений оператора для оценки спектра B·η
 samples = []
-for v in probes:
-    Av  = op.matvec(v)
-    eta_v = np.einsum("ab...,b...->a...", np.asarray(problem.eps_tensor),
-                      np.asarray(v))
-    # Rayleigh-like quotient per component
-    for idx in np.ndindex(*grid.N):
-        s = (np.asarray(Av)[(slice(None),) + idx]
-             - np.asarray(v)[(slice(None),) + idx])
-        e = eta_v[(slice(None),) + idx]
-        if np.linalg.norm(e) > 1e-12:
-            samples.append(complex(np.vdot(e, s) / np.vdot(e, e)))
-        if len(samples) >= 20:
-            break
-    if len(samples) >= 20:
-        break
+rng = np.random.default_rng(42)
+for _ in range(30):
+    v    = be.array((rng.standard_normal((3,) + grid.N)
+                     + 1j * rng.standard_normal((3,) + grid.N)).astype(np.complex128))
+    Av   = np.asarray(op.matvec(v))
+    v_np = np.asarray(v)
+    # приближение собственного значения B·η через отношение Рэлея
+    num = np.vdot(v_np.ravel(), (Av - v_np).ravel())
+    den = np.vdot(v_np.ravel(), v_np.ravel())
+    if abs(den) > 0:
+        samples.append(complex(num / den))
 
-params  = g0.find_params(samples)
+params  = g0.find_params(samples)          # {"mu": ..., "radius": ...}
 cfg_sim = em3d.SolverConfig(max_iter=500, rtol=1e-8,
                              mu=params["mu"], radius=params["radius"])
 result  = em3d.SIM(cfg_sim).solve(op, wave)
 ```
 
-### GPU backend
+### GPU-бэкенд
 
 ```python
-be_gpu   = em3d.Backend.cupy(em3d.Precision.DOUBLE)   # requires CuPy
+be_gpu   = em3d.Backend.cupy(em3d.Precision.DOUBLE)   # требуется CuPy
 grid_gpu = em3d.Grid(N=(32, 32, 32), L=(1.0, 1.0, 1.0),
                      center=(0.0, 0.0, 0.0), backend=be_gpu)
-# everything else is identical — the operator lives on the GPU
+# Далее всё идентично CPU-варианту; оператор живёт на GPU
 ```
 
 ---
 
-## Module reference
+## Справочник модулей
 
-| Module | Public symbols | Purpose |
-|--------|---------------|---------|
-| `em3d` | see `__all__` | Top-level re-exports |
-| `em3d.backend` | `Backend`, `Precision` | NumPy/CuPy abstraction, dtype pairs |
-| `em3d.grid` | `Grid` | Structured Cartesian grid, cell volumes, coordinates |
-| `em3d.refraction` | `cylinder_refraction`, `step_refraction`, `ellipsis_refraction`, `apply_refraction` | Build dielectric contrast tensor η |
-| `em3d.wave` | `flat_wave_vec` | Sample a plane wave on the grid |
-| `em3d.problem` | `Problem` | Container: grid + ε-tensor + wave + k₀ |
-| `em3d.operator` | `Operator` | FFT VIE operator: `matvec` (A), `rmatvec` (A†), `to_dense` |
-| `em3d.gamma0` | `find_params`, `sequential_chain`, `compute_circle_*` | γ₀ via convex hull + smallest enclosing circle |
-| `em3d.solvers` | `SIM`, `BiCGStab`, `TwoStep`, `SolverConfig`, `SolverResult`, `BaseSolver` | Iterative solvers |
+| Модуль | Публичные символы | Назначение |
+|--------|-------------------|------------|
+| `em3d` | см. `__all__` | Верхнеуровневые реэкспорты |
+| `em3d.backend` | `Backend`, `Precision` | Абстракция NumPy/CuPy, пары dtype |
+| `em3d.grid` | `Grid` | Структурированная декартова сетка, объём ячейки, координаты |
+| `em3d.refraction` | `cylinder_refraction`, `step_refraction`, `ellipsis_refraction`, `apply_refraction` | Построение тензора контраста $\boldsymbol{\eta}$ |
+| `em3d.wave` | `flat_wave_vec` | Выборка плоской волны на сетке |
+| `em3d.problem` | `Problem` | Контейнер: сетка + $\boldsymbol{\varepsilon}$ + волна + $k_0$ |
+| `em3d.operator` | `Operator` | БПФ-оператор ОИУ: `matvec` $(\mathbf{A})$, `rmatvec` $(\mathbf{A}^\dagger)$, `to_dense` |
+| `em3d.gamma0` | `find_params`, `sequential_chain`, `compute_circle_*` | $\gamma_0$ через выпуклую оболочку + МОО |
+| `em3d.solvers` | `SIM`, `BiCGStab`, `TwoStep`, `SolverConfig`, `SolverResult`, `BaseSolver` | Итерационные методы |
 
-### `SolverConfig` fields
+### Поля `SolverConfig`
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `max_iter` | `200` | Maximum number of iterations |
-| `rtol` | `1e-6` | Relative residual tolerance `‖Au−f‖/‖f‖` |
-| `log` | `False` | Print residuals each iteration |
-| `mu` | `None` | γ₀ centre (SIM only — from `gamma0.find_params`) |
-| `radius` | `None` | γ₀ radius (SIM only) |
+| Поле | По умолч. | Описание |
+|------|-----------|----------|
+| `max_iter` | `200` | Максимальное число итераций |
+| `rtol` | `1e-6` | Порог относительной невязки $\|\mathbf{Au}-\mathbf{f}\| / \|\mathbf{f}\|$ |
+| `log` | `False` | Печатать невязку на каждой итерации |
+| `mu` | `None` | Центр $\mu$ круга $\gamma_0$ (только SIM — из `gamma0.find_params`) |
+| `radius` | `None` | Радиус $r$ круга $\gamma_0$ (только SIM) |
 
-### Solver comparison
+### Сравнение солверов
 
-| Solver | γ₀ required | Uses `rmatvec` | Notes |
-|--------|-------------|----------------|-------|
-| `SIM` | ✅ | ✗ | Simple iteration; fastest per-iter when γ₀ ≪ spectral radius |
-| `BiCGStab` | ✗ | ✗ | Generally fastest convergence; no extra parameters |
-| `TwoStep` | ✗ | ✅ | Steepest descent; good for non-self-adjoint operators |
-
----
-
-## Mathematical background
-
-### Discretisation
-
-The scattering domain Q ⊂ ℝ³ is covered by a uniform Cartesian grid with
-N = Nx × Ny × Nz cells of volume dV = Lx Ly Lz / N.
-
-The discrete VIE in collocation form is
-
-```
-u_i + Σ_j B_ij η_j u_j = f_i,    i = 1 … N
-```
-
-where **B**_ij = dV · G(|r_i − r_j|, k₀) for i ≠ j and
-**B**_ii = ∫₀^{r₀} exp(ik₀r) r dr  (excluded-sphere self-interaction, r₀ = (3dV/4π)^{1/3}).
-
-### FFT acceleration
-
-The matrix **B** is Toeplitz on the periodic lattice.  Embedding in the 2× larger
-lattice Π₂ makes the operator circulant; matvec becomes:
-
-```
-B η u = IFFT[ FFT(kernel) ⊙ FFT(zero-pad(η u)) ][ :N ]
-```
-
-Cost: O(N log N) per matvec vs. O(N²) dense.
-
-### γ₀ parameter (SIM)
-
-For convergence of SIM `u ← u − γ₀(Au − f)`, the optimal step satisfies
-γ₀ = 1/μ where μ is the centre of the **smallest enclosing circle** of the
-convex hull of sampled eigenvalues of **B**·**η**.
-The `gamma0` module implements this via Andrew's monotone chain + Welzl-style enumeration.
+| Метод | Нужен $\gamma_0$ | Использует `rmatvec` | Примечание |
+|-------|-----------------|----------------------|------------|
+| `SIM` | ✅ | ✗ | Простая итерация; быстро при малом спектральном радиусе $\mathbf{B}\boldsymbol{\eta}$ |
+| `BiCGStab` | ✗ | ✗ | Обычно наилучшая сходимость; параметры не нужны |
+| `TwoStep` | ✗ | ✅ | Двухшаговый MSGD; эффективен для несамосопряжённых операторов |
 
 ---
 
-## Development
+## Математическое обоснование
+
+### Дискретизация
+
+Область рассеяния $Q \subset \mathbb{R}^3$ покрывается равномерной декартовой сеткой
+$N = N_x \times N_y \times N_z$ ячеек объёма
+
+$$\Delta V = \frac{L_x L_y L_z}{N_x N_y N_z}$$
+
+Дискретное ОИУ в точках коллокации:
+
+$$\mathbf{u}_i + \sum_{j=1}^{N} B_{ij}\,\boldsymbol{\eta}_j\,\mathbf{u}_j = \mathbf{f}_i, \qquad i = 1,\ldots,N$$
+
+где
+
+$$B_{ij} = \begin{cases} \displaystyle\int_0^{r_0} e^{ik_0 r}\,r\,dr, & i = j \\[6pt] \Delta V \cdot \dfrac{e^{ik_0|\mathbf{r}_i - \mathbf{r}_j|}}{4\pi|\mathbf{r}_i - \mathbf{r}_j|}, & i \neq j \end{cases}$$
+
+Здесь $r_0 = \left(\dfrac{3\,\Delta V}{4\pi}\right)^{1/3}$ — радиус сферы, эквивалентной по объёму ячейке (формула исключённой сферы для самодействия).
+
+### БПФ-ускорение
+
+Матрица $\mathbf{B}$ тёплицева на периодической решётке. Вложение в удвоенную решётку $\Pi_2 = [0,\,2L]^3$ делает оператор циркулянтным; матвек становится:
+
+$$(\mathbf{B}\boldsymbol{\eta}\mathbf{u})_i = \mathrm{IFFT}\!\left[\,\hat{K} \odot \mathrm{FFT}(\text{zero-pad}(\boldsymbol{\eta}\mathbf{u}))\,\right]_{i},\quad i \leq N$$
+
+Стоимость: $\mathcal{O}(N\log N)$ против $\mathcal{O}(N^2)$ для плотной матрицы.
+
+### Параметр $\gamma_0$ (для SIM)
+
+Итерация SIM:
+
+$$\mathbf{u}^{(k+1)} = \mathbf{u}^{(k)} - \gamma_0\!\left(\mathbf{A}\mathbf{u}^{(k)} - \mathbf{f}\right), \qquad \mathbf{A} = \mathbf{I} + \mathbf{B}\boldsymbol{\eta}$$
+
+сходится при $\gamma_0 = 1/\mu$, где $\mu$ — центр **наименьшей описанной окружности** (МОО) выпуклой оболочки выборки спектра $\mathbf{B}\boldsymbol{\eta}$.
+
+Модуль `gamma0` реализует:
+1. Алгоритм Эндрю (монотонная цепь) для выпуклой оболочки точек $\{\lambda_k\} \subset \mathbb{C}$.
+2. Перебор пар и троек вершин для поиска МОО.
+3. Проверку, что $0 \notin$ МОО (иначе $\gamma_0$ не определён).
+
+### Двухшаговый метод (TwoStep)
+
+Минимизирует $\|\mathbf{A}\mathbf{u} - \mathbf{f}\|^2$ методом наискорейшего спуска:
+
+$$\mathbf{p}^{(k)} = \mathbf{A}^\dagger\,\mathbf{r}^{(k)}, \qquad \tau_k = \frac{\|\mathbf{p}^{(k)}\|^2}{\|\mathbf{A}\mathbf{p}^{(k)}\|^2}, \qquad \mathbf{u}^{(k+1)} = \mathbf{u}^{(k)} - \tau_k\,\mathbf{p}^{(k)}$$
+
+где $\mathbf{r}^{(k)} = \mathbf{A}\mathbf{u}^{(k)} - \mathbf{f}$.
+
+---
+
+## Разработка
 
 ```bash
-# clone and install with dev extras
+# Клонировать и установить с dev-зависимостями
 git clone https://github.com/qwerty29544/em3d.git
 cd em3d
 pip install -e ".[dev]"
 
-# run CPU tests
+# Запуск тестов (CPU)
 pytest
 
-# run GPU tests (requires CUDA device + CuPy)
+# Только GPU-тесты (требует CUDA-устройство + CuPy)
 pytest -m gpu
 
-# run without GPU marker
+# Без GPU-тестов
 pytest -m "not gpu"
 ```
 
 ---
 
-## Requirements
+## Зависимости
 
-| Package | Version |
-|---------|---------|
-| Python  | ≥ 3.11  |
-| NumPy   | ≥ 1.26  |
-| SciPy   | ≥ 1.11  |
-| CuPy    | ≥ 13 *(optional, GPU)* |
+| Пакет | Версия |
+|-------|--------|
+| Python | ≥ 3.11 |
+| NumPy | ≥ 1.26 |
+| SciPy | ≥ 1.11 |
+| CuPy | ≥ 13 *(опционально, GPU)* |
 
 ---
 
-## License
+## Лицензия
 
-MIT — see [LICENSE](LICENSE) file.
+MIT — см. файл [LICENSE](LICENSE).

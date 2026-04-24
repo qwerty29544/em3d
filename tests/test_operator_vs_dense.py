@@ -126,3 +126,30 @@ def test_fft_matvec_single_precision_tolerance(backend_numpy_single):
     y = op.matvec(u)
     assert y.dtype == backend_numpy_single.complex_dtype
     assert np.all(np.isfinite(np.asarray(y)))
+
+
+@pytest.mark.gpu
+def test_operator_matvec_gpu_matches_cpu():
+    cupy = pytest.importorskip("cupy", reason="cupy not installed")
+    from em3d.backend import Backend
+    from em3d.dtypes import Precision
+
+    be_cpu = Backend.numpy(Precision.DOUBLE)
+    be_gpu = Backend.cupy(Precision.DOUBLE)
+
+    def make(be):
+        grid = Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0, 0, 0), backend=be)
+        scalar = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0, radius=0.3, axis="z")
+        eta = apply_refraction(grid, scalar_eta=scalar)
+        wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
+        return Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=grid.dv * 64)
+
+    p_cpu = make(be_cpu)
+    p_gpu = make(be_gpu)
+    op_cpu = Operator(p_cpu)
+    op_gpu = Operator(p_gpu)
+    u_cpu = p_cpu.wave
+    u_gpu = p_gpu.wave
+    y_cpu = op_cpu.matvec(u_cpu)
+    y_gpu = be_gpu.to_host(op_gpu.matvec(u_gpu))
+    np.testing.assert_allclose(y_gpu, np.asarray(y_cpu), atol=1e-10)

@@ -32,84 +32,78 @@ def sequential_chain(points: np.ndarray) -> np.ndarray:
     return np.array(hull_points, dtype=np.float64)
 
 
-def compute_circle_three_points(a, b, c):
-    """Circumscribed circle of triangle (a, b, c). Returns (cx, cy, radius)."""
-    ax, ay = float(a[0]), float(a[1])
-    bx, by = float(b[0]), float(b[1])
-    cx, cy = float(c[0]), float(c[1])
-    D = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
-    if abs(D) < 1e-30:
-        raise ValueError("Points are colinear — no circumscribed circle")
-    ux = ((ax**2 + ay**2) * (by - cy) + (bx**2 + by**2) * (cy - ay) + (cx**2 + cy**2) * (ay - by)) / D
-    uy = ((ax**2 + ay**2) * (cx - bx) + (bx**2 + by**2) * (ax - cx) + (cx**2 + cy**2) * (bx - ax)) / D
-    r = np.sqrt((ax - ux) ** 2 + (ay - uy) ** 2)
-    return ux, uy, r
+def compute_circle_two_points(z1: complex, z2: complex) -> tuple:
+    """Circle through two points with the smaller radius (midpoint, |z2-z1|/2)."""
+    centre = 0.5 * (z1 + z2)
+    radius = abs(z2 - z1) / 2.0
+    return centre, float(radius)
 
 
-def smallest_enclosing_circle(points: np.ndarray):
-    """Welzl-inspired smallest enclosing circle for a set of 2D points.
+def compute_circle_three_points(z1: complex, z2: complex, z3: complex) -> tuple:
+    """Circumscribed circle through three non-collinear complex points."""
+    ax, ay = z1.real, z1.imag
+    bx, by = z2.real, z2.imag
+    cx, cy = z3.real, z3.imag
+    d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) < 1e-30:
+        raise ValueError("three points are collinear")
+    ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d
+    uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d
+    centre = complex(ux, uy)
+    radius = abs(centre - z1)
+    return centre, float(radius)
 
-    Returns (cx, cy, radius).
+
+def circle_contains_points(centre: complex, radius: float, points, epsilon: float = 1e-8) -> bool:
+    pts = np.asarray(points, dtype=np.complex128)
+    return bool(np.all(np.abs(pts - centre) <= radius + epsilon))
+
+
+def circle_contains_origin(centre: complex, radius: float, epsilon: float = 1e-8) -> bool:
+    return abs(centre) <= radius + epsilon
+
+
+def find_params(spectrum_samples: np.ndarray) -> dict:
+    """Compute the optimal γ₀ iteration parameter from spectrum samples.
+
+    Returns {'mu': complex, 'radius': float}. The return dict is plug-compatible
+    with SolverConfig(**find_params(samples)). Raises ValueError if samples are
+    degenerate (fewer than 2 points, origin inside the resulting circle).
     """
-    pts = np.asarray(points, dtype=np.float64)
-    n = len(pts)
-    if n == 0:
-        raise ValueError("Empty point set")
-    if n == 1:
-        return pts[0, 0], pts[0, 1], 0.0
-    if n == 2:
-        cx = (pts[0, 0] + pts[1, 0]) / 2
-        cy = (pts[0, 1] + pts[1, 1]) / 2
-        r = np.linalg.norm(pts[0] - pts[1]) / 2
-        return cx, cy, r
+    pts = np.asarray(spectrum_samples, dtype=np.complex128)
+    if len(pts) < 2:
+        raise ValueError("find_params requires at least 2 spectrum samples")
 
-    # Iterative Welzl (Welzl 1991, randomised)
-    rng = np.random.default_rng(0)
-    order = rng.permutation(n)
-    pts_shuffled = pts[order]
+    # Convex hull of the point set in 2D real coordinates
+    as_xy = np.column_stack([pts.real, pts.imag])
+    hull_xy = sequential_chain(as_xy)
+    hull = hull_xy[:, 0] + 1j * hull_xy[:, 1]
+    if len(hull) < 2:
+        raise ValueError("spectrum samples are degenerate (collinear or identical)")
 
-    def in_circle(cx, cy, r, p):
-        return np.linalg.norm(p - np.array([cx, cy])) <= r + 1e-12
-
-    def circle_from_1(p):
-        return p[0], p[1], 0.0
-
-    def circle_from_2(p, q):
-        cx = (p[0] + q[0]) / 2
-        cy = (p[1] + q[1]) / 2
-        return cx, cy, np.linalg.norm(p - q) / 2
-
-    def circle_from_3(p, q, r_pt):
-        try:
-            return compute_circle_three_points(p, q, r_pt)
-        except ValueError:
-            return circle_from_2(p, r_pt) if np.linalg.norm(p - r_pt) > np.linalg.norm(q - r_pt) else circle_from_2(q, r_pt)
-
-    cx, cy, r = circle_from_1(pts_shuffled[0])
-    for i in range(1, n):
-        p = pts_shuffled[i]
-        if not in_circle(cx, cy, r, p):
-            cx, cy, r = circle_from_1(p)
-            for j in range(i):
-                q = pts_shuffled[j]
-                if not in_circle(cx, cy, r, q):
-                    cx, cy, r = circle_from_2(p, q)
-                    for k in range(j):
-                        s = pts_shuffled[k]
-                        if not in_circle(cx, cy, r, s):
-                            cx, cy, r = circle_from_3(p, q, s)
-    return cx, cy, r
-
-
-def find_params(samples) -> dict:
-    """Find the optimal iteration parameter μ and bounding radius for the spectrum samples.
-
-    `samples`: 1-D complex array of eigenvalue approximations.
-    Returns dict with keys 'mu' (complex) and 'radius' (float).
-    Uses the convex hull of the real (Re, Im) representation, then smallest enclosing circle
-    of hull vertices.
-    """
-    pts = np.column_stack([np.real(samples), np.imag(samples)])
-    hull = sequential_chain(pts)
-    cx, cy, radius = smallest_enclosing_circle(hull if len(hull) >= 2 else pts)
-    return {"mu": complex(cx, cy), "radius": float(radius)}
+    # Smallest enclosing circle among: (a) pairs of hull points (diameter), (b) triples.
+    best = None  # (radius, centre)
+    for i in range(len(hull)):
+        for j in range(i + 1, len(hull)):
+            c, r = compute_circle_two_points(hull[i], hull[j])
+            if circle_contains_points(c, r, hull):
+                if best is None or r < best[0]:
+                    best = (r, c)
+    for i in range(len(hull)):
+        for j in range(i + 1, len(hull)):
+            for k in range(j + 1, len(hull)):
+                try:
+                    c, r = compute_circle_three_points(hull[i], hull[j], hull[k])
+                except ValueError:
+                    continue
+                if circle_contains_points(c, r, hull):
+                    if best is None or r < best[0]:
+                        best = (r, c)
+    if best is None:
+        raise ValueError("could not find a bounding circle; check spectrum samples")
+    radius, mu = best
+    if circle_contains_origin(mu, radius):
+        raise ValueError(
+            "origin lies inside (or on) the bounding circle; γ₀ is ill-defined for this spectrum"
+        )
+    return {"mu": mu, "radius": float(radius)}

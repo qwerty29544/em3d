@@ -1,7 +1,15 @@
 import numpy as np
 import pytest
 
-from em3d.gamma0 import cross, sequential_chain, compute_circle_three_points, smallest_enclosing_circle, find_params
+from em3d.gamma0 import (
+    cross,
+    sequential_chain,
+    compute_circle_two_points,
+    compute_circle_three_points,
+    circle_contains_points,
+    circle_contains_origin,
+    find_params,
+)
 
 
 def test_cross_positive():
@@ -34,35 +42,62 @@ def test_sequential_chain_colinear():
     assert len(hull) == 2
 
 
-def test_circle_three_points_known():
-    a = np.array([1.0, 0.0])
-    b = np.array([-1.0, 0.0])
-    c = np.array([0.0, 1.0])
-    cx, cy, r = compute_circle_three_points(a, b, c)
-    assert abs(cx) < 1e-12 and abs(cy) < 1e-12
-    assert abs(r - 1.0) < 1e-10
+def test_circle_two_points_midpoint():
+    p1 = 1.0 + 0j
+    p2 = 3.0 + 0j
+    centre, radius = compute_circle_two_points(p1, p2)
+    assert abs(centre - 2.0) < 1e-12
+    assert abs(radius - 1.0) < 1e-12
 
 
-def test_smallest_enclosing_circle_triangle():
-    pts = np.array([[0.0, 0.0], [2.0, 0.0], [1.0, 1.0]])
-    cx, cy, r = smallest_enclosing_circle(pts)
-    assert r < 1.5  # sanity: circle fits the triangle
-    for p in pts:
-        assert np.linalg.norm(p - np.array([cx, cy])) <= r + 1e-12
+def test_circle_three_points_unit_circle():
+    p1 = 1.0 + 0j
+    p2 = -1.0 + 0j
+    p3 = 0.0 + 1j
+    centre, radius = compute_circle_three_points(p1, p2, p3)
+    assert abs(centre) < 1e-12
+    assert abs(radius - 1.0) < 1e-12
 
 
-def test_find_params_returns_mu_and_radius():
-    # samples from a known half-disk: eigenvalues in [1, 1+eps] on complex plane
-    samples = np.array([1.0 + 0j, 1.5 + 0.5j, 1.5 - 0.5j, 2.0 + 0j])
-    params = find_params(samples)
-    assert set(params.keys()) == {"mu", "radius"}
-    assert params["mu"].real > 0
-    assert params["radius"] > 0
+def test_circle_contains_points_inside():
+    centre = 0.0 + 0.0j
+    radius = 2.0
+    pts = np.array([1.0 + 1.0j, -1.0 + 0.5j])
+    assert circle_contains_points(centre, radius, pts)
 
 
-def test_find_params_unit_circle():
-    # uniform samples on the unit circle + 1 (spectrum of an identity-like operator)
-    theta = np.linspace(0, 2 * np.pi, 20, endpoint=False)
-    samples = 1.0 + np.exp(1j * theta)
-    params = find_params(samples)
-    assert abs(params["radius"] - 1.0) < 1e-6
+def test_circle_contains_points_outside():
+    centre = 0.0 + 0.0j
+    radius = 1.0
+    pts = np.array([1.5 + 0.0j])
+    assert not circle_contains_points(centre, radius, pts)
+
+
+def test_circle_contains_origin_true():
+    assert circle_contains_origin(centre=0.5 + 0.0j, radius=1.0) is True
+
+
+def test_circle_contains_origin_false():
+    assert circle_contains_origin(centre=2.0 + 0.0j, radius=1.0) is False
+
+
+def test_find_params_simple_case():
+    # spectrum along the positive real axis from 1 to 3 → optimal μ = 2, radius = 1
+    samples = np.array([1.0 + 0j, 2.0 + 0j, 3.0 + 0j])
+    result = find_params(samples)
+    assert abs(result["mu"] - 2.0) < 1e-6
+    assert abs(result["radius"] - 1.0) < 1e-6
+    # result is plug-compatible with SolverConfig(**result)
+    assert set(result.keys()) == {"mu", "radius"}
+
+
+def test_find_params_rejects_origin_inside_hull():
+    # if samples straddle the origin, γ₀ is ill-defined
+    samples = np.array([-1.0 + 0j, 1.0 + 0j, 0.0 + 1j])
+    with pytest.raises(ValueError):
+        find_params(samples)
+
+
+def test_find_params_requires_at_least_two():
+    with pytest.raises(ValueError):
+        find_params(np.array([1.0 + 0j]))

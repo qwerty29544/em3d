@@ -17,9 +17,15 @@ def b_coeff(x, y, *, k: float, dv: float):
     """Discrete b-coefficient for the volume integral operator.
 
     For a pair of cell centres x, y ∈ R^3 with cell volume dv,
-    returns dv · G(|x-y|, k) per collocation. See notebook cell ~654.
+    returns dv · G(|x-y|, k) for x≠y, or the excluded-sphere self-interaction
+    integral_0^{r0} exp(ikr)·r dr for x=y, where r0 = (3·dv/(4π))^{1/3}.
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
-    r = np.linalg.norm(x - y)
+    r = float(np.linalg.norm(x - y))
+    if r < 1e-15:
+        r0 = (3.0 * dv / (4.0 * np.pi)) ** (1.0 / 3.0)
+        if abs(k) < 1e-15:
+            return r0 * r0 / 2.0
+        return np.exp(1j * k * r0) * (r0 / (1j * k) - 1.0 / (k * k)) + 1.0 / (k * k)
     return dv * green_helmholtz(r, k=k)

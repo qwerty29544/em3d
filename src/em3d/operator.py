@@ -23,9 +23,18 @@ def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
     sz = xp.concatenate([xp.arange(Nz) * dz, -(xp.arange(Nz, 0, -1)) * dz])
     SX, SY, SZ = xp.meshgrid(sx, sy, sz, indexing="ij")
     R = xp.sqrt(SX * SX + SY * SY + SZ * SZ)
-    R_reg = xp.where(R < 1e-30, 1e-30, R)
-    G = xp.exp(1j * k * R_reg) / (4.0 * xp.pi * R_reg)
-    scalar = (grid.dv * G).astype(be.complex_dtype, copy=False)
+    # Excluded-sphere self-interaction at R=0
+    dv = grid.dv
+    r0 = float((3.0 * dv / (4.0 * xp.pi)) ** (1.0 / 3.0))
+    if abs(k) > 1e-15:
+        G_self = xp.exp(be.complex_dtype(1j * k * r0)) * (r0 / be.complex_dtype(1j * k) - 1.0 / (k * k)) + 1.0 / (k * k)
+    else:
+        G_self = be.complex_dtype(r0 * r0 / 2.0)
+    # Off-diagonal: standard Green's function (avoid division by zero at R=0)
+    R_safe = xp.where(R < 1e-15, xp.ones_like(R), R)
+    G_off = xp.exp(be.complex_dtype(1j * k) * R_safe) / (4.0 * xp.pi * R_safe)
+    scalar = xp.where(R < 1e-15, G_self, (dv * G_off).astype(be.complex_dtype))
+    scalar = scalar.astype(be.complex_dtype, copy=False)
     # isotropic 3×3 block: tensor[a, b] = δ_{ab} · scalar
     shape = (3, 3) + scalar.shape
     out = be.zeros(shape, kind="complex")

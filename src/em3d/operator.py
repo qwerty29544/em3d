@@ -23,7 +23,9 @@ def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
     sz = xp.concatenate([xp.arange(Nz) * dz, -(xp.arange(Nz, 0, -1)) * dz])
     SX, SY, SZ = xp.meshgrid(sx, sy, sz, indexing="ij")
     R = xp.sqrt(SX * SX + SY * SY + SZ * SZ)
-    # Excluded-sphere self-interaction at R=0
+    # Excluded-sphere self-interaction at R=0: ∫₀^r₀ exp(ikr)·r dr
+    # No dv factor: the spherical integral absorbs the cell volume implicitly
+    # through r0 = (3·dv/4π)^{1/3}; matches b_coeff(x, x, k, dv) in kernel.py.
     dv = grid.dv
     r0 = float((3.0 * dv / (4.0 * xp.pi)) ** (1.0 / 3.0))
     if abs(k) > 1e-15:

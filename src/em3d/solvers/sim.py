@@ -6,7 +6,7 @@ from .base import SolverConfig, SolverResult
 
 class SIM:
     def __init__(self, config: SolverConfig):
-        config.require_gamma()
+        config.require_gamma()  # ensures mu and radius were set by find_params; radius unused in iteration but required for convergence guarantee
         self.cfg = config
 
     def solve(self, operator, rhs) -> SolverResult:

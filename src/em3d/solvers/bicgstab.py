@@ -40,7 +40,11 @@ class BiCGStab:
                 residuals.append(s_norm / rhs_norm)
                 return SolverResult(u=u, iterations=k, residual_history=residuals, converged=True)
             t = operator.matvec(s)
-            omega = complex(xp.vdot(t, s)) / complex(xp.vdot(t, t))
+            t_norm_sq = complex(xp.vdot(t, t))
+            if abs(t_norm_sq) < 1e-30 * rhs_norm * rhs_norm:
+                # BiCGStab breakdown: A·s ≈ 0, cannot continue
+                return SolverResult(u=u, iterations=k, residual_history=residuals, converged=False)
+            omega = complex(xp.vdot(t, s)) / t_norm_sq
             u = u + be.complex_dtype(alpha) * p + be.complex_dtype(omega) * s
             r = s - be.complex_dtype(omega) * t
             rel = float(xp.linalg.norm(r)) / rhs_norm

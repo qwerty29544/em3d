@@ -48,7 +48,12 @@ def scatter_integral(
     if method == "direct":
         return scatter_integral_direct(u, problem, directions, batch_size=batch_size)
     elif method == "fft":
-        from ._fft import scatter_integral_fft
+        try:
+            from ._fft import scatter_integral_fft
+        except ImportError:
+            raise NotImplementedError(
+                "method='fft' requires em3d.farfield._fft which is not yet available"
+            ) from None
         return scatter_integral_fft(u, problem, directions)
     else:
         raise ValueError(f"method must be 'direct' or 'fft', got {method!r}")

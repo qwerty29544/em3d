@@ -30,7 +30,8 @@ def _make_problem(N=(4, 4, 4), eps_real=2.0, eps_imag=0.0, k0=1.0):
 
 # --- Test 1: zero contrast (direct method) ---
 
-def test_zero_contrast():
+@pytest.mark.parametrize("method", ["direct", "fft"])
+def test_zero_contrast(method):
     """eta=0 → F=0, sigma=0."""
     be = _be()
     grid = Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=be)
@@ -38,7 +39,7 @@ def test_zero_contrast():
     wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
     problem = Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=grid.dv * 64)
     directions = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    F = scatter_integral(wave, problem, directions, method="direct")
+    F = scatter_integral(wave, problem, directions, method=method)
     np.testing.assert_allclose(F, 0.0, atol=1e-14)
 
 
@@ -84,3 +85,62 @@ def test_rcs_plane_shape():
     phi, sigma = rcs_plane(problem.wave, problem, n_phi=12, plane="xy")
     assert phi.shape == (12,)
     assert sigma.shape == (12,)
+
+
+# --- Test 4: fft vs direct agreement ---
+
+def test_fft_vs_direct_agreement():
+    """FFT backend matches direct to atol=1e-4 on an 8x8x8 grid."""
+    be = _be()
+    grid = Grid(N=(8, 8, 8), L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=be)
+    scalar = ellipsis_refraction(
+        grid, eps_real=2.0, eps_imag=0.0,
+        center=(0.0, 0.0, 0.0), radius=(0.3, 0.3, 0.3),
+    )
+    eta = apply_refraction(grid, scalar_eta=scalar)
+    wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
+    problem = Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0,
+                      volume=grid.dv * 512)
+    rng = np.random.default_rng(42)
+    u = (rng.standard_normal((3, 8, 8, 8))
+         + 1j * rng.standard_normal((3, 8, 8, 8))).astype(np.complex128)
+    directions = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1 / np.sqrt(3), 1 / np.sqrt(3), 1 / np.sqrt(3)],
+    ])
+    F_direct = scatter_integral(u, problem, directions, method="direct")
+    F_fft    = scatter_integral(u, problem, directions, method="fft")
+    np.testing.assert_allclose(F_fft, F_direct, atol=1e-4,
+                                err_msg="FFT and direct backends disagree")
+
+
+# --- Test 6: rcs_plane symmetry ---
+
+def test_rcs_plane_symmetry():
+    """Isotropic sphere, real eta, uniform x-field:
+    sigma(phi) == sigma(phi + pi) in xy-plane.
+    Proof: for real eta and u=(1,0,0), F(phi+pi) = conj(F(phi)),
+    so |e_p(phi+pi) x F(phi+pi)|^2 = |e_p(phi) x F(phi)|^2.
+    """
+    be = _be()
+    N = (8, 8, 8)
+    grid = Grid(N=N, L=(2.0, 2.0, 2.0), center=(0.0, 0.0, 0.0), backend=be)
+    scalar = ellipsis_refraction(
+        grid, eps_real=2.0, eps_imag=0.0,
+        center=(0.0, 0.0, 0.0), radius=(0.4, 0.4, 0.4),
+    )
+    eta = apply_refraction(grid, scalar_eta=scalar)
+    wave = flat_wave_vec(grid, k=0.1, orient=(0, 0, 1), amplitude=(1, 0, 0))
+    u = np.zeros((3,) + N, dtype=np.complex128)
+    u[0] = 1.0                                       # uniform x-polarized field
+    problem = Problem(grid=grid, eps_tensor=eta, wave=wave, k0=0.1,
+                      volume=grid.dv * int(np.prod(N)))
+    n_phi = 24
+    phi, sigma = rcs_plane(u, problem, n_phi=n_phi, plane="xy")
+    half = n_phi // 2
+    np.testing.assert_allclose(
+        sigma[:half], sigma[half:], rtol=1e-10, atol=1e-35,
+        err_msg="RCS not symmetric: sigma(phi) != sigma(phi+pi)",
+    )

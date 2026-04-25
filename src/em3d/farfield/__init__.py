@@ -32,8 +32,9 @@ def scatter_integral(
     ----------
     u          : array (3, N1, N2, N3) complex — E-field solution
     problem    : Problem — eps_tensor (η=ε−I), k0, grid
-    directions : array (M, 3) float — unit observation vectors; a single (3,)
-                 vector is automatically broadcast to (1, 3)
+    directions : array (M, 3) float — observation vectors (not normalised; caller
+                 is responsible for providing unit vectors); a single (3,) vector
+                 is automatically broadcast to (1, 3)
     method     : "direct"  — batched matmul, O(3NM) flops, O(N+batch·N) memory
                  "fft"     — 3D FFT + map_coordinates, O(9N log N + 9M) flops
     batch_size : directions per batch (used only for method="direct")

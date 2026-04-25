@@ -30,8 +30,7 @@ def _make_problem(N=(4, 4, 4), eps_real=2.0, eps_imag=0.0, k0=1.0):
 
 # --- Test 1: zero contrast (direct method) ---
 
-@pytest.mark.parametrize("method", ["direct"])
-def test_zero_contrast(method):
+def test_zero_contrast():
     """eta=0 → F=0, sigma=0."""
     be = _be()
     grid = Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=be)
@@ -39,7 +38,7 @@ def test_zero_contrast(method):
     wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
     problem = Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=grid.dv * 64)
     directions = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    F = scatter_integral(wave, problem, directions, method=method)
+    F = scatter_integral(wave, problem, directions, method="direct")
     np.testing.assert_allclose(F, 0.0, atol=1e-14)
 
 

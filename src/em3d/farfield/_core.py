@@ -1,6 +1,6 @@
 """Variant A: batched matmul computation of the scatter integral.
 
-F[m] = dv * J_flat @ phase[:, m].conj().T
+F[m] = dv * J_flat @ phase[:, m].T
 where J_flat[i, n] = sum_j eta[i,j,...][n] * u[j,...][n]   (polarization current)
       phase[b, n]  = exp(-1j * k0 * (e_p[b] @ r[n]))
 """
@@ -27,6 +27,11 @@ def scatter_integral_direct(
     directions : array (M, 3) float — unit vectors ê_p
     batch_size : int — directions processed per batch to cap memory
     """
+    directions = np.asarray(directions, dtype=np.float64)
+    if directions.ndim != 2 or directions.shape[1] != 3:
+        raise ValueError(
+            f"directions must have shape (M, 3), got {directions.shape}"
+        )
     grid = problem.grid
     be = grid.backend
     xp = be.xp

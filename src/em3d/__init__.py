@@ -20,6 +20,7 @@ from .refraction import (
 )
 from .wave import flat_wave_vec
 from . import gamma0
+from . import farfield
 from .solvers import BaseSolver, BiCGStab, SIM, SolverConfig, SolverResult, TwoStep
 
 __version__ = "0.1.0"
@@ -36,6 +37,7 @@ __all__ = [
     "step_refraction",
     "flat_wave_vec",
     "gamma0",
+    "farfield",
     "BaseSolver",
     "BiCGStab",
     "SIM",

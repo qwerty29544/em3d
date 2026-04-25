@@ -82,7 +82,7 @@ def scatter_integral_fft(
     iz = k0 * dirs_np[:, 2] * Lz / (2.0 * np.pi) * _PAD + PNz / 2.0
     coords = np.stack([ix, iy, iz], axis=0)             # (3, M)
 
-    # 5. Bilinear interpolation component by component
+    # 5. Cubic interpolation component by component
     #    map_coordinates does not support complex arrays -> split real/imag
     M = len(dirs_np)
     F = np.zeros((M, 3), dtype=np.complex128)

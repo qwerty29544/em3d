@@ -3,15 +3,16 @@
 Algorithm
 ---------
 1. Compute J_dv = eta @ u * dv  (shape 3xN1xN2xN3)
-2. Zero-pad by factor PAD and apply fftn + fftshift on each of the 3 components.
-   Zero-padding oversamples the DFT, reducing interpolation error from O(1) to
-   O(1/PAD^2) so that bilinear (order=1) interpolation is accurate.
+2. Zero-pad by factor _PAD and apply fftn + fftshift on each of the 3 components.
+   A small oversampling factor (_PAD=4) combined with cubic interpolation (order=3)
+   achieves atol < 1e-4 for compact-support scatterers while keeping memory O(PAD^3 * N).
 3. For each observation direction e_p = (ex, ey, ez), the sample
    coordinates in the zero-padded fftshifted array are:
        ix = k0 * ex * Lx / (2*pi) * PAD + (PAD*Nx)/2
        iy = k0 * ey * Ly / (2*pi) * PAD + (PAD*Ny)/2
        iz = k0 * ez * Lz / (2*pi) * PAD + (PAD*Nz)/2
-4. Interpolate (bilinear, order=1) real and imaginary parts separately
+4. Interpolate (cubic, order=3, mode='wrap') real and imaginary parts separately.
+   Periodic boundary (wrap) matches the DFT's periodicity assumption.
 5. Apply phase correction for grid corner r0:
        F *= exp(-1j * k0 * (e_p @ r0))
    where r0 = [cx - Lx/2 + dx/2,  cy - Ly/2 + dy/2,  cz - Lz/2 + dz/2]
@@ -23,9 +24,10 @@ from scipy.ndimage import map_coordinates
 
 from ..problem import Problem
 
-# Zero-padding factor: oversamples the DFT spectrum so that bilinear
-# interpolation error is suppressed below ~1e-5 for k0*L/(2*pi) <= 1.
-_PAD = 32
+# Zero-padding factor: small oversampling (PAD=4) + cubic interpolation achieves
+# atol < 1e-4 for compact-support scatterers.  Memory cost: (PAD*N)^3 * 3 * 16 bytes.
+# N=8 -> ~1.6 MB; N=32 -> ~200 MB; increase PAD for higher accuracy demands.
+_PAD = 4
 
 
 def scatter_integral_fft(
@@ -86,8 +88,8 @@ def scatter_integral_fft(
     F = np.zeros((M, 3), dtype=np.complex128)
     for i in range(3):
         F[:, i] = (
-            map_coordinates(J_hat[i].real, coords, order=1, mode="nearest")
-            + 1j * map_coordinates(J_hat[i].imag, coords, order=1, mode="nearest")
+            map_coordinates(J_hat[i].real, coords, order=3, mode="wrap")
+            + 1j * map_coordinates(J_hat[i].imag, coords, order=3, mode="wrap")
         )
 
     # 6. Phase correction: multiply by exp(-1j * k0 * (e_p @ r0))

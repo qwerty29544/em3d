@@ -8,7 +8,7 @@ import pytest
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
-from em3d.vis import plot_rcs, plot_rcs_polar, plot_field_slice
+from em3d.vis import plot_rcs, plot_rcs_polar, plot_field_slice, plot_field_volume
 
 
 def _synthetic_data(n: int = 24):
@@ -149,3 +149,40 @@ def test_plot_field_slice_invalid_inputs():
 
     with pytest.raises(ValueError, match=r"\(3, Nx, Ny, Nz\)"):
         plot_field_slice(np.zeros((2, 8, 8, 8)), grid)
+
+
+# ── plot_field_volume tests ───────────────────────────────────────────────
+
+def test_plot_field_volume_returns_fig_ax3d():
+    """plot_field_volume returns (Figure, Axes3D) with ax.name == '3d'."""
+    u = _field_data()
+    grid = _field_grid()
+    fig, ax = plot_field_volume(u, grid, stride=2)
+    assert isinstance(fig, Figure)
+    assert ax.name == "3d"
+
+
+def test_plot_field_volume_warns_large_grid():
+    """stride=1 on a 16³ grid (4096 arrows) triggers UserWarning about stride."""
+    u = _field_data(nx=16, ny=16, nz=16)
+    grid = _field_grid(n=16)
+    with pytest.warns(UserWarning, match="stride"):
+        plot_field_volume(u, grid, stride=1)
+
+
+def test_plot_field_volume_all_parts():
+    """part='real'/'imag'/'abs' all run without error."""
+    u = _field_data()
+    grid = _field_grid()
+    for part in ["real", "imag", "abs"]:
+        fig, ax = plot_field_volume(u, grid, part=part, stride=2)
+        assert isinstance(fig, Figure), f"part={part!r} did not return Figure"
+
+
+def test_plot_field_volume_view_angles():
+    """elev and azim are applied via view_init and readable back from the axes."""
+    u = _field_data()
+    grid = _field_grid()
+    fig, ax = plot_field_volume(u, grid, stride=2, elev=45.0, azim=30.0)
+    assert abs(ax.elev - 45.0) < 1.0, f"Expected elev≈45, got {ax.elev}"
+    assert abs(ax.azim - 30.0) < 1.0, f"Expected azim≈30, got {ax.azim}"

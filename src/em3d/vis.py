@@ -125,7 +125,7 @@ def _extract_part(u: np.ndarray, part: str) -> np.ndarray:
     if part == "imag":
         return u.imag.astype(np.float64)
     if part == "abs":
-        return np.abs(u)
+        return np.abs(u).astype(np.float64)
     raise ValueError(f"part must be 'real', 'imag', or 'abs', got {part!r}")
 
 
@@ -232,6 +232,8 @@ def plot_field_slice(
 
     F_max = float(np.sqrt(U2d ** 2 + V2d ** 2).max())
     if F_max > 0:
+        # Use the geometric mean of the two in-plane cell spacings so that
+        # arrow scale is correct on non-square grids (isotropic grid: same as dx).
         if plane == "xy":
             dh = float(np.sqrt((grid.L[0] / grid.N[0]) * (grid.L[1] / grid.N[1])))
         elif plane == "xz":
@@ -304,12 +306,10 @@ def plot_field_volume(
     import matplotlib.colors as mcolors
 
     u = _validate_u(u)
-    if part not in ("real", "imag", "abs"):
-        raise ValueError(f"part must be 'real', 'imag', or 'abs', got {part!r}")
     if stride < 1:
         raise ValueError(f"stride must be >= 1, got {stride}")
 
-    F = _extract_part(u, part)          # (3, Nx, Ny, Nz), float64
+    F = _extract_part(u, part)          # (3, Nx, Ny, Nz), float64; raises on bad part
 
     sl = (slice(None, None, stride),) * 3
     X, Y, Z = grid.coords()
@@ -320,7 +320,7 @@ def plot_field_volume(
     V  = np.asarray(F[1][sl])
     W  = np.asarray(F[2][sl])
 
-    if Xs.size == 0 or any(s == 0 for s in Xs.shape):
+    if Xs.size == 0:
         warnings.warn(
             f"plot_field_volume: stride={stride} exceeds grid dimensions after decimation; "
             f"no arrows to draw",

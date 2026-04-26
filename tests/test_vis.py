@@ -112,12 +112,18 @@ def test_plot_field_slice_all_parts():
 
 
 def test_plot_field_slice_stride():
-    """stride=2 succeeds and returns (Figure, Axes)."""
+    """stride=2 decimates quiver to 4×4 arrows on an 8×8 grid."""
+    import matplotlib.quiver as mquiver
     u = _field_data()
     grid = _field_grid()
     fig, ax = plot_field_slice(u, grid, stride=2)
     assert isinstance(fig, Figure)
     assert isinstance(ax, Axes)
+    quivers = [c for c in ax.collections if isinstance(c, mquiver.Quiver)]
+    assert len(quivers) == 1, "Expected exactly one quiver collection"
+    assert quivers[0].N == 4 * 4, (
+        f"Expected 16 arrows (4×4 decimated from 8×8), got {quivers[0].N}"
+    )
 
 
 def test_plot_field_slice_saves_file(tmp_path):
@@ -147,8 +153,13 @@ def test_plot_field_slice_invalid_inputs():
     with pytest.raises(ValueError, match="out of range"):
         plot_field_slice(u, grid, plane="xy", idx=100)
 
+    # wrong first dimension (shape[0] != 3)
     with pytest.raises(ValueError, match=r"\(3, Nx, Ny, Nz\)"):
         plot_field_slice(np.zeros((2, 8, 8, 8)), grid)
+
+    # wrong number of dimensions (ndim != 4)
+    with pytest.raises(ValueError, match=r"\(3, Nx, Ny, Nz\)"):
+        plot_field_slice(np.zeros((3, 8, 8)), grid)
 
 
 # ── plot_field_volume tests ───────────────────────────────────────────────
@@ -186,3 +197,21 @@ def test_plot_field_volume_view_angles():
     fig, ax = plot_field_volume(u, grid, stride=2, elev=45.0, azim=30.0)
     assert abs(ax.elev - 45.0) < 1.0, f"Expected elev≈45, got {ax.elev}"
     assert abs(ax.azim - 30.0) < 1.0, f"Expected azim≈30, got {ax.azim}"
+
+
+def test_plot_field_volume_invalid_inputs():
+    """Bad arguments raise ValueError with informative messages."""
+    u = _field_data()
+    grid = _field_grid()
+
+    with pytest.raises(ValueError, match="part"):
+        plot_field_volume(u, grid, part="magnitude", stride=2)
+
+    with pytest.raises(ValueError, match="stride"):
+        plot_field_volume(u, grid, stride=0)
+
+    with pytest.raises(ValueError, match=r"\(3, Nx, Ny, Nz\)"):
+        plot_field_volume(np.zeros((2, 8, 8, 8)), grid)
+
+    with pytest.raises(ValueError, match=r"\(3, Nx, Ny, Nz\)"):
+        plot_field_volume(np.zeros((3, 8, 8)), grid)

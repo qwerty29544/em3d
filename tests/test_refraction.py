@@ -84,6 +84,17 @@ def test_ellipsis_anisotropic(backend_numpy_double):
     np.testing.assert_allclose(eta[:, :, 0, 0, 0], np.zeros((3, 3)), atol=1e-12)
 
 
+# --- Guard: passing geometry-function result to scalar_eta raises ValueError ---
+
+def test_apply_refraction_rejects_tensor_as_scalar(backend_numpy_double):
+    """Passing a (3,3,Nx,Ny,Nz) tensor to scalar_eta= raises a helpful ValueError."""
+    grid = _grid(backend_numpy_double)
+    eta_tensor = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0, radius=0.49, axis="z")
+    assert eta_tensor.shape == (3, 3) + grid.N  # sanity-check the fixture
+    with pytest.raises(ValueError, match=r"apply_refraction is not needed"):
+        apply_refraction(grid, scalar_eta=eta_tensor)
+
+
 # --- New: type mismatch raises TypeError ---
 
 def test_to_eta_mat_type_mismatch(backend_numpy_double):

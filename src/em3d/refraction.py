@@ -31,6 +31,14 @@ def _to_eta_mat(eps_real, eps_imag) -> np.ndarray:
             f"got ndim={np.ndim(eps_real)} and ndim={np.ndim(eps_imag)}"
         )
     if real_is_scalar:
+        if np.iscomplex(eps_real):
+            raise TypeError(
+                f"eps_real must be a real scalar, got complex value {eps_real!r}"
+            )
+        if np.iscomplex(eps_imag):
+            raise TypeError(
+                f"eps_imag must be a real scalar, got complex value {eps_imag!r}"
+            )
         return (float(eps_real) - 1.0 + 1j * float(eps_imag)) * np.eye(3, dtype=np.complex128)
     E = np.asarray(eps_real, dtype=np.float64)
     F = np.asarray(eps_imag, dtype=np.float64)

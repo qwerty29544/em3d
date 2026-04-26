@@ -32,6 +32,7 @@ $$(\mathbf{I} + \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
 - **Два бэкенда** — NumPy (CPU) и CuPy (GPU/CUDA) с единым API.
 - **Две точности** — `float64/complex128` (двойная) и `float32/complex64` (одинарная).
 - **Типизирован** — маркер `py.typed` (PEP 561), аннотированный публичный API.
+- **Визуализация** — `em3d.vis`: срезы поля с квиверами (`plot_field_slice`), 3D-объём стрелок (`plot_field_volume`), диаграммы ЭПР в декартовых и полярных координатах (`plot_rcs`, `plot_rcs_polar`).
 
 ---
 
@@ -47,6 +48,12 @@ pip install git+https://github.com/qwerty29544/em3d.git@v0.1.0
 
 ```bash
 pip install git+https://github.com/qwerty29544/em3d.git
+```
+
+### С поддержкой визуализации (matplotlib)
+
+```bash
+pip install "git+https://github.com/qwerty29544/em3d.git@v0.1.0[vis]"
 ```
 
 ### С поддержкой GPU (требует CUDA 12 и CuPy)
@@ -96,6 +103,54 @@ result = em3d.BiCGStab(cfg).solve(op, wave)
 print(f"Сошлось: {result.converged}  итераций: {result.iterations}")
 u = np.asarray(result.u)   # форма (3, 16, 16, 16), complex128
 ```
+
+### Визуализация ЭПР
+
+Модуль `em3d.farfield` вычисляет кривую ЭПР по результату решателя; `em3d.vis` строит её график. Для использования установите пакет с опцией `[vis]`.
+
+```python
+import matplotlib.pyplot as plt
+from em3d.vis import plot_rcs, plot_rcs_polar
+
+# u получено выше как np.asarray(result.u)
+phi, sigma = em3d.farfield.rcs_plane(u, problem, n_phi=180, plane="xy")
+
+# Декартовы координаты: sigma(φ)
+fig, ax = plot_rcs(phi, sigma, title="ЭПР в плоскости xy")
+plt.show()
+
+# Полярные координаты, нормированные dБ
+fig, ax = plot_rcs_polar(phi, sigma, db=True, title="ЭПР (дБ, полярные)")
+plt.show()
+
+# Сохранить в файл без вывода окна
+plot_rcs(phi, sigma, filename="rcs_xy.png")
+```
+
+### Визуализация среза поля
+
+`plot_field_slice` строит цветовую карту $\|\mathbf{u}\|$ на срезе сетки и накладывает квивер в-плоскости с автоматически масштабированными стрелками.
+
+```python
+from em3d.vis import plot_field_slice
+
+u = np.asarray(result.u)   # (3, Nx, Ny, Nz) complex128
+
+# Срез в плоскости xy по модулю поля; децимация 2× для читаемых стрелок
+fig, ax = plot_field_slice(u, grid, plane="xy", part="abs", stride=2)
+plt.show()
+
+# Реальная часть, срез xz на индексе 8
+fig, ax = plot_field_slice(u, grid, plane="xz", part="real", idx=8)
+plt.show()
+
+# Сохранить
+plot_field_slice(u, grid, plane="xy", part="abs", stride=2, filename="field_xy.png")
+```
+
+Параметр `part` принимает значения `"real"` / `"imag"` / `"abs"`. Фон всегда показывает полную трёхмерную норму $\|\mathbf{F}\|$; стрелки — проекцию вектора в плоскость среза.
+
+---
 
 ### SIM с оптимальным параметром $\gamma_0$
 
@@ -231,7 +286,9 @@ eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
 | `em3d.problem` | `Problem` | Контейнер: сетка + $\boldsymbol{\varepsilon}$ + волна + $k_0$ |
 | `em3d.operator` | `Operator` | БПФ-оператор ОИУ: `matvec` $(\mathbf{A})$, `rmatvec` $(\mathbf{A}^\dagger)$, `to_dense` |
 | `em3d.gamma0` | `find_params`, `sequential_chain`, `compute_circle_*` | $\gamma_0$ через выпуклую оболочку + МОО |
+| `em3d.farfield` | `rcs`, `rcs_plane` | ЭПР в произвольном направлении и кривая ЭПР в координатной плоскости |
 | `em3d.solvers` | `SIM`, `BiCGStab`, `TwoStep`, `SolverConfig`, `SolverResult`, `BaseSolver` | Итерационные методы |
+| `em3d.vis` | `plot_rcs`, `plot_rcs_polar`, `plot_field_slice`, `plot_field_volume` | Визуализация ЭПР и электромагнитного поля *(требует `pip install em3d[vis]`)* |
 
 ### Поля `SolverConfig`
 

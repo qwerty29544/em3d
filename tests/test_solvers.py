@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from em3d.grid import Grid
-from em3d.refraction import cylinder_refraction, apply_refraction
+from em3d.refraction import cylinder_refraction
 from em3d.wave import flat_wave_vec
 from em3d.problem import Problem
 from em3d.operator import Operator
@@ -29,8 +29,7 @@ def test_solver_result_fields():
 
 def _toy_problem_for_solver(be):
     grid = Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=be)
-    scalar = cylinder_refraction(grid, eps_real=1.1, eps_imag=0.0, radius=0.2, axis="z")
-    eta = apply_refraction(grid, scalar_eta=scalar)
+    eta = cylinder_refraction(grid, eps_real=1.1, eps_imag=0.0, radius=0.2, axis="z")
     wave = flat_wave_vec(grid, k=0.5, orient=(0, 0, 1), amplitude=(1, 0, 0))
     volume = grid.dv * 64
     return Problem(grid=grid, eps_tensor=eta, wave=wave, k0=0.5, volume=volume)

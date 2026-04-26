@@ -5,9 +5,11 @@ Public API
 plot_rcs(phi, sigma, *, title=None, filename=None) -> (fig, ax)
 plot_rcs_polar(phi, sigma, *, db=False, title=None, filename=None) -> (fig, ax)
 plot_field_slice(u, grid, *, plane="xy", idx=None, part="real", stride=1, cmap="RdBu_r", title=None, filename=None) -> (fig, ax)
-plot_field_volume(u, grid, *, part="real", stride=2, elev=30.0, azim=-60.0, cmap="RdBu_r", title=None, filename=None) -> (fig, ax3d)
+plot_field_volume(u, grid, *, part="real", stride=2, elev=30.0, azim=-60.0, cmap="RdBu_r", title=None, filename=None) -> (fig, ax)
 """
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 
@@ -146,7 +148,7 @@ def plot_field_slice(
     Parameters
     ----------
     u        : array (3, Nx, Ny, Nz) complex — field from solver result.u
-    grid     : em3d.Grid
+    grid     : em3d.Grid — must expose .coords(), .dv, and .N
     plane    : "xy" | "xz" | "yz" — orientation of the slice
     idx      : index along the normal axis; None uses N//2 (middle)
     part     : "real" | "imag" | "abs" — which part of u to display
@@ -274,7 +276,7 @@ def plot_field_volume(
     Parameters
     ----------
     u        : array (3, Nx, Ny, Nz) complex — field from solver result.u
-    grid     : em3d.Grid
+    grid     : em3d.Grid — must expose .coords(), .dv, and .N
     part     : "real" | "imag" | "abs" — which part of u to display
     stride   : show every stride-th point per axis (default 2)
     elev     : elevation angle in degrees for 3-D view (default 30)
@@ -298,7 +300,6 @@ def plot_field_volume(
     >>> fig, ax = plot_field_volume(u, grid, elev=90, azim=0)    # top-down
     >>> fig, ax = plot_field_volume(u, grid, elev=0,  azim=0)    # front view
     """
-    import warnings
     plt = _require_matplotlib()
     import matplotlib.colors as mcolors
 
@@ -318,6 +319,25 @@ def plot_field_volume(
     U  = np.asarray(F[0][sl])
     V  = np.asarray(F[1][sl])
     W  = np.asarray(F[2][sl])
+
+    if Xs.size == 0 or any(s == 0 for s in Xs.shape):
+        warnings.warn(
+            f"plot_field_volume: stride={stride} exceeds grid dimensions after decimation; "
+            f"no arrows to draw",
+            UserWarning,
+            stacklevel=2,
+        )
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        ax.view_init(elev=elev, azim=azim)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
+        if title is not None:
+            ax.set_title(title)
+        if filename is not None:
+            fig.savefig(filename, dpi=150, bbox_inches="tight")
+        return fig, ax
 
     n_arrows = Xs.size
     if n_arrows > 2_000:

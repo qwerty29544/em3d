@@ -4,6 +4,8 @@ Public API
 ----------
 plot_rcs(phi, sigma, *, title=None, filename=None) -> (fig, ax)
 plot_rcs_polar(phi, sigma, *, db=False, title=None, filename=None) -> (fig, ax)
+plot_field_slice(u, grid, *, plane="xy", idx=None, part="real", stride=1, cmap="RdBu_r", title=None, filename=None) -> (fig, ax)
+plot_field_volume(u, grid, *, part="real", stride=2, elev=30.0, azim=-60.0, cmap="RdBu_r", title=None, filename=None) -> (fig, ax3d)
 """
 from __future__ import annotations
 
@@ -117,9 +119,9 @@ def _validate_u(u) -> np.ndarray:
 def _extract_part(u: np.ndarray, part: str) -> np.ndarray:
     """Return real-valued (3, Nx, Ny, Nz) array for the chosen part."""
     if part == "real":
-        return u.real.copy()
+        return u.real.astype(np.float64)
     if part == "imag":
-        return u.imag.copy()
+        return u.imag.astype(np.float64)
     if part == "abs":
         return np.abs(u)
     raise ValueError(f"part must be 'real', 'imag', or 'abs', got {part!r}")
@@ -163,8 +165,6 @@ def plot_field_slice(
     u = _validate_u(u)
     if plane not in ("xy", "xz", "yz"):
         raise ValueError(f"plane must be 'xy', 'xz', or 'yz', got {plane!r}")
-    if part not in ("real", "imag", "abs"):
-        raise ValueError(f"part must be 'real', 'imag', or 'abs', got {part!r}")
     if stride < 1:
         raise ValueError(f"stride must be >= 1, got {stride}")
 
@@ -202,7 +202,7 @@ def plot_field_slice(
         F2d   = F[:, idx, :, :]         # (3, Ny, Nz)
         hlabel, vlabel = "y", "z"
 
-    # Background: norm of all three components on this slice
+    # Background: Full 3-D field magnitude at the slice (all three components including out-of-plane).
     norm2d = np.sqrt(F2d[0] ** 2 + F2d[1] ** 2 + F2d[2] ** 2)  # (Nh, Nv)
     vmax = float(norm2d.max()) if norm2d.max() > 0 else 1.0
 
@@ -230,7 +230,12 @@ def plot_field_slice(
 
     F_max = float(np.sqrt(U2d ** 2 + V2d ** 2).max())
     if F_max > 0:
-        dh    = float(grid.dv ** (1.0 / 3.0))
+        if plane == "xy":
+            dh = float(np.sqrt((grid.L[0] / grid.N[0]) * (grid.L[1] / grid.N[1])))
+        elif plane == "xz":
+            dh = float(np.sqrt((grid.L[0] / grid.N[0]) * (grid.L[2] / grid.N[2])))
+        else:  # yz
+            dh = float(np.sqrt((grid.L[1] / grid.N[1]) * (grid.L[2] / grid.N[2])))
         scale = F_max / (stride * dh * 0.9)
         arrow_norm = np.sqrt(U2d ** 2 + V2d ** 2)
         Hg, Vg = np.meshgrid(Hs, Vs, indexing="ij")

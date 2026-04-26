@@ -218,8 +218,15 @@ def plot_field_slice(
     s = stride
     Hs  = horiz[::s]
     Vs  = vert[::s]
-    U2d = F2d[0, ::s, ::s]             # in-plane component 1
-    V2d = F2d[1, ::s, ::s]             # in-plane component 2
+    if plane == "xy":
+        U2d = F2d[0, ::s, ::s]         # x-component
+        V2d = F2d[1, ::s, ::s]         # y-component
+    elif plane == "xz":
+        U2d = F2d[0, ::s, ::s]         # x-component
+        V2d = F2d[2, ::s, ::s]         # z-component
+    else:  # yz
+        U2d = F2d[1, ::s, ::s]         # y-component
+        V2d = F2d[2, ::s, ::s]         # z-component
 
     F_max = float(np.sqrt(U2d ** 2 + V2d ** 2).max())
     if F_max > 0:

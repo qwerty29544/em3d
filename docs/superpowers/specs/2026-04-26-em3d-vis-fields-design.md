@@ -114,6 +114,8 @@ def plot_field_volume(
     *,
     part: str = "real",
     stride: int = 2,
+    elev: float = 30.0,         # elevation angle in degrees (matplotlib default)
+    azim: float = -60.0,        # azimuth angle in degrees (matplotlib default)
     cmap: str = "RdBu_r",
     title: str | None = None,
     filename: str | None = None,
@@ -147,6 +149,16 @@ Passed as `length=length` and `normalize=False` to `ax.quiver`.
 
 **Arrow colour:** per-arrow norm `√(U² + V² + W²)`, normalised to `[0, 1]`,
 mapped through `cmap` → RGBA array passed as `colors=` to `ax.quiver`.
+
+**View angle:** `ax.view_init(elev=elev, azim=azim)` is called after drawing.
+Defaults (`elev=30, azim=-60`) match matplotlib's own defaults so existing calls
+are unaffected; the user overrides to any angle:
+
+```python
+fig, ax = plot_field_volume(u, grid, elev=45, azim=30)   # isometric-ish
+fig, ax = plot_field_volume(u, grid, elev=90, azim=0)    # top-down (xy projection)
+fig, ax = plot_field_volume(u, grid, elev=0,  azim=0)    # front view (xz projection)
+```
 
 **Axes:** `ax.set_xlabel("x")`, `ax.set_ylabel("y")`, `ax.set_zlabel("z")`.
 
@@ -257,6 +269,10 @@ with `stride=1`. Assert `pytest.warns(UserWarning, match="stride")`.
 **`test_plot_field_volume_all_parts`**
 Call `plot_field_volume(u, grid, part=p, stride=2)` for each `p` in
 `["real", "imag", "abs"]`. Assert no exception.
+
+**`test_plot_field_volume_view_angles`**
+Call `plot_field_volume(u, grid, stride=2, elev=45.0, azim=30.0)`.
+Assert `abs(ax.elev - 45.0) < 1.0` and `abs(ax.azim - 30.0) < 1.0`.
 
 ---
 

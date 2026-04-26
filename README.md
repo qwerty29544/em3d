@@ -77,9 +77,9 @@ grid = em3d.Grid(N=(16, 16, 16), L=(1.0, 1.0, 1.0),
                  center=(0.0, 0.0, 0.0), backend=be)
 
 # ── 2. Диэлектрический цилиндр вдоль z (ε_r = 2, без поглощения) ─────────
-scalar_eta = em3d.cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0,
+eps_tensor = em3d.cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0,
                                        radius=0.3, axis="z")
-eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
+# cylinder_refraction возвращает (3,3,Nx,Ny,Nz) — apply_refraction не нужен
 
 # ── 3. Падающая волна (E ∥ x̂, распространение вдоль ẑ, k₀ = 1) ──────────
 wave = em3d.flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
@@ -133,6 +133,92 @@ grid_gpu = em3d.Grid(N=(32, 32, 32), L=(1.0, 1.0, 1.0),
 
 ---
 
+## Геометрии рефракции
+
+Функции `cylinder_refraction`, `step_refraction`, `ellipsis_refraction` возвращают тензор контраста $\boldsymbol{\eta} = \boldsymbol{\varepsilon} - \mathbf{I}$ формы **(3, 3, Nx, Ny, Nz)** — готовый к передаче в `Problem` как `eps_tensor`. Вне заданной геометрической области значения равны нулю.
+
+### Изотропный рассеиватель (скалярный ε)
+
+Скалярные `eps_real` и `eps_imag` — это сахар для диагональной матрицы $\varepsilon_r \mathbf{I}$:
+
+```python
+eps_tensor = em3d.cylinder_refraction(grid, eps_real=2.25, eps_imag=0.0,
+                                       radius=0.3, axis="z")
+# eps_tensor.shape == (3, 3, Nx, Ny, Nz)
+problem = em3d.Problem(..., eps_tensor=eps_tensor, ...)
+```
+
+### Анизотропный рассеиватель (матрица ε)
+
+`eps_real` и `eps_imag` можно передать как массивы формы `(3, 3)`. Оба аргумента должны быть одного типа: либо оба скаляры, либо оба матрицы.
+
+```python
+import numpy as np
+
+eps_r = np.array([[3.0, 0.0, 0.0],
+                  [0.0, 2.0, 0.0],
+                  [0.0, 0.0, 1.5]])   # диагональная анизотропия
+eps_i = np.zeros((3, 3))
+
+eps_tensor = em3d.ellipsis_refraction(
+    grid,
+    eps_real=eps_r, eps_imag=eps_i,
+    center=(0.0, 0.0, 0.0), radius=(0.2, 0.2, 0.2),
+)
+```
+
+### Несколько областей
+
+Поскольку все функции возвращают обычные массивы NumPy/CuPy, области объединяются оператором `+`. Вне каждой области хранятся нули, поэтому сложение равносильно объединению.
+
+**Непересекающиеся области:**
+
+```python
+eta_cylinder = em3d.cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0,
+                                         radius=0.15, axis="z")
+eta_slab     = em3d.step_refraction(grid, eps_real=1.5, eps_imag=0.02,
+                                     z_min=0.3, z_max=0.45)
+
+eps_tensor = eta_cylinder + eta_slab   # объединение двух материалов
+problem = em3d.Problem(..., eps_tensor=eps_tensor, ...)
+```
+
+**Пересекающиеся области** при сложении получают суммарный контраст $\boldsymbol{\eta}_1 + \boldsymbol{\eta}_2$. Если нужно чтобы одна область перекрывала другую (одним материалом поверх другого), маски строятся вручную через `xp.where`:
+
+```python
+xp = grid.backend.xp
+X, Y, Z = grid.coords()
+
+mask_outer = (X**2 + Y**2) <= 0.3**2
+mask_inner = (X**2 + Y**2) <= 0.1**2   # полость внутри цилиндра
+
+eta_outer = complex(2.0 - 1.0, 0.0)   # η = ε - 1
+eta_inner = complex(3.5 - 1.0, 0.05)
+
+out = grid.backend.zeros((3, 3) + grid.N, kind="complex")
+for d in range(3):
+    out[d, d] = xp.where(mask_inner, eta_inner,
+                xp.where(mask_outer, eta_outer, out[d, d]))
+
+problem = em3d.Problem(..., eps_tensor=out, ...)
+```
+
+### `apply_refraction` — когда ещё нужен
+
+`apply_refraction` остаётся полезным для **вручную построенных скалярных полей** η формы `(Nx, Ny, Nz)`, например после арифметики над массивами:
+
+```python
+# Градиентное распределение проницаемости вдоль z
+_, _, Z = grid.coords()
+scalar_eta = (1.5 - 1.0) * (1.0 + 0.3 * Z / grid.L[2])   # (Nx, Ny, Nz), float
+
+eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
+```
+
+> **Важно:** не передавайте результат geometry-функции в `apply_refraction(scalar_eta=...)` — он уже имеет форму `(3,3,Nx,Ny,Nz)` и будет отклонён с понятным сообщением об ошибке.
+
+---
+
 ## Справочник модулей
 
 | Модуль | Публичные символы | Назначение |
@@ -140,7 +226,7 @@ grid_gpu = em3d.Grid(N=(32, 32, 32), L=(1.0, 1.0, 1.0),
 | `em3d` | см. `__all__` | Верхнеуровневые реэкспорты |
 | `em3d.backend` | `Backend`, `Precision` | Абстракция NumPy/CuPy, пары dtype |
 | `em3d.grid` | `Grid` | Структурированная декартова сетка, объём ячейки, координаты |
-| `em3d.refraction` | `cylinder_refraction`, `step_refraction`, `ellipsis_refraction`, `apply_refraction` | Построение тензора контраста $\boldsymbol{\eta}$ |
+| `em3d.refraction` | `cylinder_refraction`, `step_refraction`, `ellipsis_refraction`, `apply_refraction` | Построение тензора контраста $\boldsymbol{\eta}$; geometry-функции возвращают `(3,3,Nx,Ny,Nz)` напрямую (см. [секцию выше](#геометрии-рефракции)) |
 | `em3d.wave` | `flat_wave_vec` | Выборка плоской волны на сетке |
 | `em3d.problem` | `Problem` | Контейнер: сетка + $\boldsymbol{\varepsilon}$ + волна + $k_0$ |
 | `em3d.operator` | `Operator` | БПФ-оператор ОИУ: `matvec` $(\mathbf{A})$, `rmatvec` $(\mathbf{A}^\dagger)$, `to_dense` |

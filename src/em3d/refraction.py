@@ -152,6 +152,16 @@ def apply_refraction(grid: Grid, *, scalar_eta=None, tensor_eta=None) -> object:
     if (scalar_eta is None) == (tensor_eta is None):
         raise ValueError("apply_refraction requires exactly one of scalar_eta or tensor_eta")
     if scalar_eta is not None:
+        if len(scalar_eta.shape) == 5 and scalar_eta.shape[:2] == (3, 3):
+            raise ValueError(
+                f"scalar_eta has shape {scalar_eta.shape} which looks like a full "
+                f"(3,3,Nx,Ny,Nz) tensor — did you pass the result of a geometry "
+                f"function (cylinder_refraction / step_refraction / ellipsis_refraction) "
+                f"directly? These functions now return (3,3,Nx,Ny,Nz) tensors ready for "
+                f"use as eps_tensor; apply_refraction is not needed:\n"
+                f"    eta = cylinder_refraction(...)  # shape (3,3,Nx,Ny,Nz)\n"
+                f"    problem = Problem(..., eps_tensor=eta, ...)"
+            )
         if scalar_eta.shape != grid.N:
             raise ValueError(f"scalar_eta.shape {scalar_eta.shape} != grid.N {grid.N}")
         out = be.zeros((3, 3) + grid.N, kind="complex")

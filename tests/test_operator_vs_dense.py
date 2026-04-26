@@ -3,7 +3,7 @@ import pytest
 
 from em3d.grid import Grid
 from em3d.operator import prep_coeffs_em3d
-from em3d.refraction import cylinder_refraction, apply_refraction
+from em3d.refraction import cylinder_refraction
 from em3d.wave import flat_wave_vec
 from em3d.problem import Problem
 from em3d.operator import Operator
@@ -19,8 +19,7 @@ def test_prep_coeffs_shape_and_dtype(backend_numpy_double):
 
 def _toy_problem(backend, N=(4, 4, 4)):
     grid = Grid(N=N, L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=backend)
-    scalar = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0, radius=0.3, axis="z")
-    eta = apply_refraction(grid, scalar_eta=scalar)
+    eta = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0, radius=0.3, axis="z")
     wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
     # approximate Q volume as all cells (toy example)
     volume = grid.dv * int(np.prod(N))
@@ -89,8 +88,7 @@ def test_fft_matvec_matches_dense(backend_numpy_double):
 def _toy_problem_lossy(backend, N=(4, 4, 4)):
     """Lossy medium (eps_imag=0.5) so that the operator is not accidentally self-adjoint."""
     grid = Grid(N=N, L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=backend)
-    scalar = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.5, radius=0.3, axis="z")
-    eta = apply_refraction(grid, scalar_eta=scalar)
+    eta = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.5, radius=0.3, axis="z")
     wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
     volume = grid.dv * int(np.prod(N))
     return Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=volume)

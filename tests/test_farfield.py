@@ -18,11 +18,10 @@ def _be():
 def _make_problem(N=(4, 4, 4), eps_real=2.0, eps_imag=0.0, k0=1.0):
     be = _be()
     grid = Grid(N=N, L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=be)
-    scalar = ellipsis_refraction(
+    eta = ellipsis_refraction(
         grid, eps_real=eps_real, eps_imag=eps_imag,
         center=(0.0, 0.0, 0.0), radius=(0.3, 0.3, 0.3),
     )
-    eta = apply_refraction(grid, scalar_eta=scalar)
     wave = flat_wave_vec(grid, k=k0, orient=(0, 0, 1), amplitude=(1, 0, 0))
     volume = grid.dv * int(np.prod(N))
     return Problem(grid=grid, eps_tensor=eta, wave=wave, k0=k0, volume=volume)
@@ -77,30 +76,18 @@ def test_single_cell_analytic():
     np.testing.assert_allclose(F, F_analytic, rtol=1e-12)
 
 
-# --- Test 5: rcs_plane shape ---
-
-def test_rcs_plane_shape():
-    """rcs_plane returns (phi, sigma) of shape (n_phi,)."""
-    problem = _make_problem(k0=0.5)
-    phi, sigma = rcs_plane(problem.wave, problem, n_phi=12, plane="xy")
-    assert phi.shape == (12,)
-    assert sigma.shape == (12,)
-
-
 # --- Test 4: fft vs direct agreement ---
 
 def test_fft_vs_direct_agreement():
     """FFT backend matches direct to atol=1e-4 on an 8x8x8 grid."""
     be = _be()
     grid = Grid(N=(8, 8, 8), L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=be)
-    scalar = ellipsis_refraction(
+    eta = ellipsis_refraction(
         grid, eps_real=2.0, eps_imag=0.0,
         center=(0.0, 0.0, 0.0), radius=(0.3, 0.3, 0.3),
     )
-    eta = apply_refraction(grid, scalar_eta=scalar)
     wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
-    problem = Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0,
-                      volume=grid.dv * 512)
+    problem = Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=grid.dv * 512)
     rng = np.random.default_rng(42)
     u = (rng.standard_normal((3, 8, 8, 8))
          + 1j * rng.standard_normal((3, 8, 8, 8))).astype(np.complex128)
@@ -116,6 +103,16 @@ def test_fft_vs_direct_agreement():
                                 err_msg="FFT and direct backends disagree")
 
 
+# --- Test 5: rcs_plane shape ---
+
+def test_rcs_plane_shape():
+    """rcs_plane returns (phi, sigma) of shape (n_phi,)."""
+    problem = _make_problem(k0=0.5)
+    phi, sigma = rcs_plane(problem.wave, problem, n_phi=12, plane="xy")
+    assert phi.shape == (12,)
+    assert sigma.shape == (12,)
+
+
 # --- Test 6: rcs_plane symmetry ---
 
 def test_rcs_plane_symmetry():
@@ -127,11 +124,10 @@ def test_rcs_plane_symmetry():
     be = _be()
     N = (8, 8, 8)
     grid = Grid(N=N, L=(2.0, 2.0, 2.0), center=(0.0, 0.0, 0.0), backend=be)
-    scalar = ellipsis_refraction(
+    eta = ellipsis_refraction(
         grid, eps_real=2.0, eps_imag=0.0,
         center=(0.0, 0.0, 0.0), radius=(0.4, 0.4, 0.4),
     )
-    eta = apply_refraction(grid, scalar_eta=scalar)
     wave = flat_wave_vec(grid, k=0.1, orient=(0, 0, 1), amplitude=(1, 0, 0))
     u = np.zeros((3,) + N, dtype=np.complex128)
     u[0] = 1.0                                       # uniform x-polarized field

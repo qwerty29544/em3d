@@ -137,8 +137,7 @@ def test_operator_matvec_gpu_matches_cpu():
 
     def make(be):
         grid = Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0, 0, 0), backend=be)
-        scalar = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0, radius=0.3, axis="z")
-        eta = apply_refraction(grid, scalar_eta=scalar)
+        eta = cylinder_refraction(grid, eps_real=2.0, eps_imag=0.0, radius=0.3, axis="z")
         wave = flat_wave_vec(grid, k=1.0, orient=(0, 0, 1), amplitude=(1, 0, 0))
         return Problem(grid=grid, eps_tensor=eta, wave=wave, k0=1.0, volume=grid.dv * 64)
 

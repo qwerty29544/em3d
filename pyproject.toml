@@ -33,6 +33,7 @@ Repository = "https://github.com/qwerty29544/em3d"
 
 [project.optional-dependencies]
 gpu = ["cupy-cuda12x>=13"]
+vis = ["matplotlib>=3.7"]
 dev = ["pytest>=8", "pytest-xdist>=3"]
 
 [tool.setuptools.packages.find]

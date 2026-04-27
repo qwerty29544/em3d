@@ -22,6 +22,7 @@ from .wave import flat_wave_vec
 from . import gamma0
 from . import farfield
 from . import vis
+from . import mie
 from .solvers import BaseSolver, BiCGStab, SIM, SolverConfig, SolverResult, TwoStep
 
 __version__ = "0.1.0"
@@ -40,6 +41,7 @@ __all__ = [
     "gamma0",
     "farfield",
     "vis",
+    "mie",
     "BaseSolver",
     "BiCGStab",
     "SIM",

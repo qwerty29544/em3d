@@ -64,3 +64,23 @@ def test_mie_coefficients_large_x_warning():
         warnings.simplefilter("always")
         em3d.mie.mie_coefficients(a=1.0, eps_r=2.0, k0=11.0)
         assert any("x=" in str(wi.message) for wi in w), "Expected UserWarning for x > 10"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 tests: far-field RCS
+# ---------------------------------------------------------------------------
+
+def test_mie_rcs_plane_symmetry():
+    """RCS in xy-plane has pi-periodicity: sigma(phi) == sigma(phi + pi)."""
+    phi, sigma = em3d.mie.mie_rcs_plane(a=0.3, eps_r=2.0, k0=1.0/0.3, n_phi=180, plane="xy")
+    half = len(phi) // 2
+    np.testing.assert_allclose(sigma[:half], sigma[half:], rtol=1e-10,
+                               err_msg="RCS should be pi-periodic in xy plane")
+
+
+def test_mie_rcs_plane_invalid_inputs():
+    """ValueError for bad plane or n_phi."""
+    with pytest.raises(ValueError, match="plane must be"):
+        em3d.mie.mie_rcs_plane(a=0.3, eps_r=2.0, k0=1.0/0.3, plane="zx")
+    with pytest.raises(ValueError, match="n_phi must be"):
+        em3d.mie.mie_rcs_plane(a=0.3, eps_r=2.0, k0=1.0/0.3, n_phi=0)

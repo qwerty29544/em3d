@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "em3d"
-version = "0.1.0"
+version = "0.2.0"
 description = "Volume integral equation solver for 3D electrodynamics on structured grids with FFT acceleration."
 readme = "README.md"
 requires-python = ">=3.11"

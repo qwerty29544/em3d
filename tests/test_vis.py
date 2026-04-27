@@ -8,7 +8,14 @@ import pytest
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
-from em3d.vis import plot_rcs, plot_rcs_polar, plot_field_slice, plot_field_volume
+from em3d.vis import (
+    plot_field_slice,
+    plot_field_volume,
+    plot_rcs,
+    plot_rcs_comparison,
+    plot_rcs_comparison_polar,
+    plot_rcs_polar,
+)
 
 
 def _synthetic_data(n: int = 24):
@@ -45,6 +52,38 @@ def test_plot_rcs_polar_db():
     assert np.all(r_data <= 0.0), (
         f"dB values should be <= 0 (normalized to max), got max={r_data.max():.4f}"
     )
+
+
+def test_plot_rcs_polar_db_zero_sigma_is_finite():
+    """All-zero RCS has no relative dB scale, but must not produce NaN."""
+    phi = np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False)
+    sigma = np.zeros_like(phi)
+    fig, ax = plot_rcs_polar(phi, sigma, db=True)
+    assert ax.name == "polar"
+    r_data = ax.lines[0].get_ydata()
+    assert np.all(np.isfinite(r_data))
+
+
+def test_plot_rcs_comparison_draws_two_cartesian_curves():
+    """plot_rcs_comparison draws numerical and Mie curves on one Cartesian axis."""
+    phi, sigma_mie = _synthetic_data()
+    sigma_num = sigma_mie * 1.2
+    fig, ax = plot_rcs_comparison(phi, sigma_num, sigma_mie)
+    assert isinstance(fig, Figure)
+    assert isinstance(ax, Axes)
+    assert len(ax.lines) == 2
+    assert ax.lines[0].get_label() == "em3d"
+    assert ax.lines[1].get_label() == "Mie"
+
+
+def test_plot_rcs_comparison_polar_draws_two_curves():
+    """plot_rcs_comparison_polar draws numerical and Mie curves on polar axes."""
+    phi, sigma_mie = _synthetic_data()
+    sigma_num = sigma_mie * 1.2
+    fig, ax = plot_rcs_comparison_polar(phi, sigma_num, sigma_mie)
+    assert isinstance(fig, Figure)
+    assert ax.name == "polar"
+    assert len(ax.lines) == 2
 
 
 def test_plot_rcs_saves_file(tmp_path):

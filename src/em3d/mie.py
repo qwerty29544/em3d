@@ -5,6 +5,7 @@ Public API
 mie_coefficients(a, eps_r, k0)    -> dict with a, b, c, d arrays + n_max
 mie_cross_sections(a, eps_r, k0)  -> dict with scat, ext, abs
 mie_rcs_plane(a, eps_r, k0, ...)  -> (phi, sigma)
+compare_rcs_plane(u, problem, a, eps_r, ...) -> dict with raw and normalized curves
 mie_field_at(xyz, a, eps_r, k0, amplitude, orient) -> (M, 3) complex
 mie_field(grid, a, eps_r, k0, amplitude, orient)   -> (3, Nx, Ny, Nz) complex
 """
@@ -19,6 +20,7 @@ __all__ = [
     "mie_coefficients",
     "mie_cross_sections",
     "mie_rcs_plane",
+    "compare_rcs_plane",
     "mie_field_at",
     "mie_field",
 ]
@@ -106,15 +108,13 @@ def mie_coefficients(a: float, eps_r: complex, k0: float) -> dict:
         n = idx + 1
         psi_mx, dpsi_mx, _, _ = _riccati(n, m * x)
         psi_x, dpsi_x, xi_x, dxi_x = _riccati(n, x)
+        den_a = m * psi_mx * dxi_x - xi_x * dpsi_mx
+        den_b = psi_mx * dxi_x - m * xi_x * dpsi_mx
 
-        an[idx] = (m * psi_mx * dpsi_x - psi_x * dpsi_mx) / (
-            m * psi_mx * dxi_x - xi_x * dpsi_mx
-        )
-        bn[idx] = (psi_mx * dpsi_x - m * psi_x * dpsi_mx) / (
-            psi_mx * dxi_x - m * xi_x * dpsi_mx
-        )
-        cn[idx] = 1j / (m * psi_mx * dxi_x - xi_x * dpsi_mx)
-        dn[idx] = 1j * m / (psi_mx * dxi_x - m * xi_x * dpsi_mx)
+        an[idx] = (m * psi_mx * dpsi_x - psi_x * dpsi_mx) / den_a
+        bn[idx] = (psi_mx * dpsi_x - m * psi_x * dpsi_mx) / den_b
+        cn[idx] = 1j / den_b
+        dn[idx] = 1j * m / den_a
 
     return {"a": an, "b": bn, "c": cn, "d": dn, "n_max": nmax}
 
@@ -176,19 +176,21 @@ def _angle_functions(n_max: int, cos_theta: np.ndarray) -> tuple:
     pi_arr = np.zeros((n_max, M), dtype=np.float64)
     tau_arr = np.zeros((n_max, M), dtype=np.float64)
 
-    pi_prev2 = np.zeros(M, dtype=np.float64)   # pi_{n-2}
-    pi_prev1 = np.ones(M, dtype=np.float64)    # pi_1 = 1
+    pi_prev2 = np.zeros(M, dtype=np.float64)   # pi_0 before n=1
+    pi_prev1 = np.ones(M, dtype=np.float64)    # pi_1
 
     for idx in range(n_max):
         n = idx + 1
         if n == 1:
             pi_n = pi_prev1.copy()
+            pi_n_minus_1 = pi_prev2
         else:
             pi_n = ((2*n - 1) / (n - 1)) * cos_theta * pi_prev1 - (n / (n - 1)) * pi_prev2
-        tau_n = n * cos_theta * pi_n - (n + 1) * pi_prev1
+            pi_n_minus_1 = pi_prev1
+        tau_n = n * cos_theta * pi_n - (n + 1) * pi_n_minus_1
         pi_arr[idx] = pi_n
         tau_arr[idx] = tau_n
-        pi_prev2 = pi_prev1
+        pi_prev2 = pi_n_minus_1
         pi_prev1 = pi_n
 
     return pi_arr, tau_arr
@@ -265,6 +267,84 @@ def mie_rcs_plane(
     return phi, np.real(sigma).astype(np.float64)
 
 
+def _normalize_rcs_curve(sigma: np.ndarray) -> tuple[np.ndarray, float]:
+    """Normalize an RCS curve by its peak, preserving all-zero curves."""
+    peak = float(np.max(sigma)) if sigma.size else 0.0
+    if peak > 0.0:
+        return sigma / peak, peak
+    return np.zeros_like(sigma, dtype=np.float64), peak
+
+
+def compare_rcs_plane(
+    u,
+    problem,
+    *,
+    a: float,
+    eps_r: complex,
+    n_phi: int = 180,
+    plane: str = "xy",
+    method: str = "direct",
+    batch_size: int = 64,
+    normalize: str = "max",
+) -> dict:
+    """Compare numerical em3d RCS against the Mie curve in one coordinate plane.
+
+    The returned dictionary includes raw RCS curves, normalized curves, shape
+    error, absolute relative error, and the numerical/Mie peak scale ratio.
+    Only max-normalization is supported; this preserves the angular diagram
+    while keeping absolute scale mismatch visible through diagnostics.
+    """
+    if normalize != "max":
+        raise ValueError(f"normalize must be 'max', got {normalize!r}")
+    if n_phi < 1:
+        raise ValueError(f"n_phi must be >= 1, got {n_phi}")
+
+    from . import farfield
+
+    phi_num, sigma_num = farfield.rcs_plane(
+        u,
+        problem,
+        n_phi=n_phi,
+        plane=plane,
+        method=method,
+        batch_size=batch_size,
+    )
+    phi_mie, sigma_mie = mie_rcs_plane(a, eps_r, problem.k0, n_phi=n_phi, plane=plane)
+
+    phi_num = np.asarray(phi_num, dtype=np.float64)
+    sigma_num = np.asarray(sigma_num, dtype=np.float64)
+    sigma_mie = np.asarray(sigma_mie, dtype=np.float64)
+    if not np.allclose(phi_num, phi_mie, rtol=0.0, atol=1e-15):
+        raise RuntimeError("numerical and Mie RCS angle grids differ")
+
+    sigma_num_norm, sigma_num_peak = _normalize_rcs_curve(sigma_num)
+    sigma_mie_norm, sigma_mie_peak = _normalize_rcs_curve(sigma_mie)
+
+    shape_den = float(np.linalg.norm(sigma_mie_norm))
+    if shape_den > 0.0:
+        shape_err = float(np.linalg.norm(sigma_num_norm - sigma_mie_norm) / shape_den)
+    else:
+        shape_err = 0.0 if np.linalg.norm(sigma_num_norm) == 0.0 else float("inf")
+
+    if sigma_mie_peak > 0.0:
+        scale_ratio = float(sigma_num_peak / sigma_mie_peak)
+        abs_rel_err = float(np.max(np.abs(sigma_num - sigma_mie)) / sigma_mie_peak)
+    else:
+        scale_ratio = float("nan")
+        abs_rel_err = 0.0 if sigma_num_peak == 0.0 else float("inf")
+
+    return {
+        "phi": phi_num,
+        "sigma_num": sigma_num,
+        "sigma_mie": sigma_mie,
+        "sigma_num_norm": sigma_num_norm,
+        "sigma_mie_norm": sigma_mie_norm,
+        "shape_err": shape_err,
+        "scale_ratio": scale_ratio,
+        "abs_rel_err": abs_rel_err,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Private: frame rotation
 # ---------------------------------------------------------------------------
@@ -277,7 +357,7 @@ def _build_frame(orient, amplitude) -> tuple:
     Parameters
     ----------
     orient    : array (3,) — propagation direction (need not be unit)
-    amplitude : array (3,) — polarisation direction (need not be unit)
+    amplitude : array (3,) — transverse polarisation vector (need not be unit)
 
     Returns
     -------
@@ -286,14 +366,27 @@ def _build_frame(orient, amplitude) -> tuple:
     """
     orient = np.asarray(orient, dtype=np.float64)
     amplitude = np.asarray(amplitude, dtype=np.float64)
-    z_can = orient / np.linalg.norm(orient)
+    if orient.shape != (3,):
+        raise ValueError(f"orient must have shape (3,), got shape={orient.shape}")
+    if amplitude.shape != (3,):
+        raise ValueError(f"amplitude must have shape (3,), got shape={amplitude.shape}")
+    orient_norm = np.linalg.norm(orient)
+    if orient_norm == 0.0:
+        raise ValueError("orient must be non-zero")
+    amplitude_norm = np.linalg.norm(amplitude)
+    if amplitude_norm == 0.0:
+        raise ValueError("amplitude must be non-zero")
+    z_can = orient / orient_norm
     amp_perp = amplitude - np.dot(amplitude, z_can) * z_can
-    if np.linalg.norm(amp_perp) < 1e-12 * max(np.linalg.norm(amplitude), 1e-30):
+    amp_perp_norm = np.linalg.norm(amp_perp)
+    if amp_perp_norm < 1e-12 * amplitude_norm:
         raise ValueError("amplitude must not be parallel to orient")
-    x_can = amp_perp / np.linalg.norm(amp_perp)
+    if abs(np.dot(amplitude, z_can)) > 1e-12 * amplitude_norm:
+        raise ValueError("amplitude must be transverse to orient")
+    x_can = amplitude / amplitude_norm
     y_can = np.cross(z_can, x_can)
     R = np.column_stack([x_can, y_can, z_can])  # (3, 3)
-    E0 = float(np.linalg.norm(amplitude))
+    E0 = float(amplitude_norm)
     return R, E0
 
 
@@ -315,7 +408,7 @@ def _field_at_canonical(
     Interior (r < a): transmitted field via c_n M^(1) and d_n N^(1) VSH.
     Exterior (r >= a): E_inc + scattered field via a_n M^(3) and b_n N^(3) VSH.
 
-    Special case r=0: returns x̂ (Mie series limit).
+    Special case r=0: returns d_1*x̂ (Mie series limit).
 
     Parameters
     ----------
@@ -341,9 +434,9 @@ def _field_at_canonical(
     z_can = xyz_can[:, 2]
     r = np.sqrt(x_can**2 + y_can**2 + z_can**2)
 
-    # r=0: Mie series limit → E = x̂
+    # r=0: only the n=1 internal N term survives; its Cartesian limit is d_1*x̂.
     zero_mask = (r == 0.0)
-    E[zero_mask, 0] = 1.0
+    E[zero_mask, 0] = dn[0]
 
     non_zero = ~zero_mask
     if not np.any(non_zero):
@@ -357,8 +450,11 @@ def _field_at_canonical(
 
     cos_theta = z_nz / r_nz
     sin_theta = rho_nz / r_nz
-    cos_phi = np.where(rho_nz > 0, x_nz / rho_nz, 1.0)
-    sin_phi = np.where(rho_nz > 0, y_nz / rho_nz, 0.0)
+    cos_phi = np.ones_like(rho_nz)
+    sin_phi = np.zeros_like(rho_nz)
+    rho_positive = rho_nz > 0
+    cos_phi[rho_positive] = x_nz[rho_positive] / rho_nz[rho_positive]
+    sin_phi[rho_positive] = y_nz[rho_positive] / rho_nz[rho_positive]
 
     # Angular functions for all non-zero points
     pi_arr, tau_arr = _angle_functions(nmax, cos_theta)  # (nmax, Mnz)
@@ -395,10 +491,10 @@ def _field_at_canonical(
             M_eph = -sph_i * tau_i[idx] * jn_val
 
             # N^(1)_{e1n}:
-            #   Er  = cos_phi * pi_n * n*(n+1)*j_n/(k_int*r)
+            #   Er  = sin_theta * cos_phi * pi_n * n*(n+1)*j_n/(k_int*r)
             #   Eth = cos_phi * tau_n * psi_n'/(k_int*r)
             #   Eph = -sin_phi * pi_n * psi_n'/(k_int*r)
-            N_er = cph_i * pi_i[idx] * n * (n + 1) * jn_val / k_int_r
+            N_er = sth_i * cph_i * pi_i[idx] * n * (n + 1) * jn_val / k_int_r
             N_eth = cph_i * tau_i[idx] * psi_prime_over_kr
             N_eph = -sph_i * pi_i[idx] * psi_prime_over_kr
 
@@ -454,10 +550,10 @@ def _field_at_canonical(
             M_eph = -sph_e * tau_e[idx] * hn_val
 
             # N^(3)_{e1n}:
-            #   Er  = cos_phi * pi_n * n*(n+1) * h_n / (k0*r)
+            #   Er  = sin_theta * cos_phi * pi_n * n*(n+1) * h_n / (k0*r)
             #   Eth = cos_phi * tau_n * xi_n'/(k0*r)
             #   Eph = -sin_phi * pi_n * xi_n'/(k0*r)
-            N_er = cph_e * pi_e[idx] * n * (n + 1) * hn_val / k0_r
+            N_er = sth_e * cph_e * pi_e[idx] * n * (n + 1) * hn_val / k0_r
             N_eth = cph_e * tau_e[idx] * xi_prime_over_kr
             N_eph = -sph_e * pi_e[idx] * xi_prime_over_kr
 
@@ -504,7 +600,7 @@ def mie_field_at(
     a         : float   — sphere radius (> 0)
     eps_r     : complex — relative permittivity of sphere
     k0        : float   — free-space wave number (> 0)
-    amplitude : array (3,) — polarisation direction of incident wave
+    amplitude : array (3,) — transverse polarisation vector of incident wave
     orient    : array (3,) — propagation direction of incident wave
 
     Returns
@@ -546,7 +642,7 @@ def mie_field(
     a         : float   — sphere radius (> 0)
     eps_r     : complex — relative permittivity
     k0        : float   — free-space wave number (> 0)
-    amplitude : array (3,) — polarisation direction
+    amplitude : array (3,) — transverse polarisation vector
     orient    : array (3,) — propagation direction
 
     Returns
@@ -554,9 +650,10 @@ def mie_field(
     ndarray (3, Nx, Ny, Nz) complex128
     """
     X, Y, Z = grid.coords()
-    X_np = np.asarray(X, dtype=np.float64)
-    Y_np = np.asarray(Y, dtype=np.float64)
-    Z_np = np.asarray(Z, dtype=np.float64)
+    be = grid.backend
+    X_np = np.asarray(be.to_host(X), dtype=np.float64)
+    Y_np = np.asarray(be.to_host(Y), dtype=np.float64)
+    Z_np = np.asarray(be.to_host(Z), dtype=np.float64)
     shape = X_np.shape  # (Nx, Ny, Nz)
     xyz = np.stack([X_np.ravel(), Y_np.ravel(), Z_np.ravel()], axis=1)  # (N^3, 3)
     E_flat = mie_field_at(xyz, a, eps_r, k0, amplitude=amplitude, orient=orient)  # (N^3, 3)

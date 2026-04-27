@@ -15,7 +15,7 @@ $$(\mathbf{I} + \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
 
 | Символ | Смысл |
 |--------|-------|
-| $\mathbf{u}(\mathbf{r})$ | рассеянное электрическое поле внутри рассеивателя |
+| $\mathbf{u}(\mathbf{r})$ | полное электрическое поле внутри расчётной области |
 | $\mathbf{f}(\mathbf{r})$ | падающая плоская волна |
 | $\boldsymbol{\eta}(\mathbf{r}) = \boldsymbol{\varepsilon}(\mathbf{r}) - \mathbf{I}$ | тензор диэлектрического контраста |
 | $\mathbf{B}$ | оператор объёмного интеграла с функцией Грина Гельмгольца $G(R) = \dfrac{e^{ik_0 R}}{4\pi R}$ |
@@ -32,16 +32,17 @@ $$(\mathbf{I} + \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
 - **Два бэкенда** — NumPy (CPU) и CuPy (GPU/CUDA) с единым API.
 - **Две точности** — `float64/complex128` (двойная) и `float32/complex64` (одинарная).
 - **Типизирован** — маркер `py.typed` (PEP 561), аннотированный публичный API.
-- **Визуализация** — `em3d.vis`: срезы поля с квиверами (`plot_field_slice`), 3D-объём стрелок (`plot_field_volume`), диаграммы ЭПР в декартовых и полярных координатах (`plot_rcs`, `plot_rcs_polar`).
+- **Аналитический эталон Ми** — `em3d.mie`: коэффициенты, сечения, ЭПР, ближнее поле и сравнение численной ЭПР с аналитической кривой для однородного изотропного шара.
+- **Визуализация** — `em3d.vis`: срезы поля с квиверами (`plot_field_slice`), 3D-объём стрелок (`plot_field_volume`), диаграммы ЭПР в декартовых и полярных координатах (`plot_rcs`, `plot_rcs_polar`, `plot_rcs_comparison`, `plot_rcs_comparison_polar`).
 
 ---
 
 ## Установка
 
-### Стабильная версия (v0.1.0) с GitHub
+### Стабильная версия (v0.2.0) с GitHub
 
 ```bash
-pip install git+https://github.com/qwerty29544/em3d.git@v0.1.0
+pip install git+https://github.com/qwerty29544/em3d.git@v0.2.0
 ```
 
 ### Последняя версия (main)
@@ -53,13 +54,13 @@ pip install git+https://github.com/qwerty29544/em3d.git
 ### С поддержкой визуализации (matplotlib)
 
 ```bash
-pip install "git+https://github.com/qwerty29544/em3d.git@v0.1.0[vis]"
+pip install "em3d[vis] @ git+https://github.com/qwerty29544/em3d.git@v0.2.0"
 ```
 
 ### С поддержкой GPU (требует CUDA 12 и CuPy)
 
 ```bash
-pip install "git+https://github.com/qwerty29544/em3d.git@v0.1.0[gpu]"
+pip install "em3d[gpu] @ git+https://github.com/qwerty29544/em3d.git@v0.2.0"
 ```
 
 ### Локальная установка для разработки
@@ -125,6 +126,70 @@ plt.show()
 
 # Сохранить в файл без вывода окна
 plot_rcs(phi, sigma, filename="rcs_xy.png")
+```
+
+### Сравнение численной ЭПР шара с решением Ми
+
+Для изотропной сферы можно построить численную ЭПР и аналитическую кривую Ми в одном масштабе. На текущем этапе полезнее сравнивать нормированную форму диаграммы: абсолютный масштаб отдельно сохраняется в `scale_ratio` и `abs_rel_err`.
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+from em3d.vis import plot_rcs_comparison, plot_rcs_comparison_polar
+
+a = 0.3
+eps_r = 2.0
+k0 = 1.0 / a
+n = 32
+
+be = em3d.Backend.numpy(em3d.Precision.DOUBLE)
+grid = em3d.Grid(N=(n, n, n), L=(1.0, 1.0, 1.0),
+                 center=(0.0, 0.0, 0.0), backend=be)
+eps_tensor = em3d.ellipsis_refraction(
+    grid,
+    eps_real=eps_r, eps_imag=0.0,
+    center=(0.0, 0.0, 0.0), radius=(a, a, a),
+)
+wave = em3d.flat_wave_vec(grid, k=k0, orient=(0, 0, 1), amplitude=(1, 0, 0))
+problem = em3d.Problem(grid=grid, eps_tensor=eps_tensor,
+                       wave=wave, k0=k0, volume=grid.dv * n**3)
+
+result = em3d.BiCGStab(em3d.SolverConfig(max_iter=500, rtol=1e-8)).solve(
+    em3d.Operator(problem), wave,
+)
+assert result.converged
+
+comparison = em3d.mie.compare_rcs_plane(
+    np.asarray(result.u),
+    problem,
+    a=a,
+    eps_r=eps_r,
+    n_phi=180,
+    plane="xy",
+    normalize="max",
+)
+
+print(f"shape_err={comparison['shape_err']:.2%}")
+print(f"scale_ratio={comparison['scale_ratio']:.3f}")
+print(f"abs_rel_err={comparison['abs_rel_err']:.2%}")
+
+# Декартовы координаты: две нормированные кривые sigma(phi) на одном графике
+plot_rcs_comparison(
+    comparison["phi"],
+    comparison["sigma_num_norm"],
+    comparison["sigma_mie_norm"],
+    title="Нормированная ЭПР: em3d vs Mie",
+)
+
+# Полярные координаты: та же нормированная диаграмма
+plot_rcs_comparison_polar(
+    comparison["phi"],
+    comparison["sigma_num_norm"],
+    comparison["sigma_mie_norm"],
+    title="Нормированная ЭПР: em3d vs Mie",
+)
+plt.show()
 ```
 
 ### Визуализация среза поля
@@ -288,7 +353,8 @@ eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
 | `em3d.gamma0` | `find_params`, `sequential_chain`, `compute_circle_*` | $\gamma_0$ через выпуклую оболочку + МОО |
 | `em3d.farfield` | `rcs`, `rcs_plane` | ЭПР в произвольном направлении и кривая ЭПР в координатной плоскости |
 | `em3d.solvers` | `SIM`, `BiCGStab`, `TwoStep`, `SolverConfig`, `SolverResult`, `BaseSolver` | Итерационные методы |
-| `em3d.vis` | `plot_rcs`, `plot_rcs_polar`, `plot_field_slice`, `plot_field_volume` | Визуализация ЭПР и электромагнитного поля *(требует `pip install em3d[vis]`)* |
+| `em3d.mie` | `mie_coefficients`, `mie_cross_sections`, `mie_rcs_plane`, `compare_rcs_plane`, `mie_field_at`, `mie_field` | Аналитический эталон Ми и сравнение численной ЭПР с аналитической кривой |
+| `em3d.vis` | `plot_rcs`, `plot_rcs_polar`, `plot_rcs_comparison`, `plot_rcs_comparison_polar`, `plot_field_slice`, `plot_field_volume` | Визуализация ЭПР и электромагнитного поля *(требует `pip install em3d[vis]`)* |
 
 ### Поля `SolverConfig`
 

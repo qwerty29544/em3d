@@ -25,7 +25,7 @@ from . import vis
 from . import mie
 from .solvers import BaseSolver, BiCGStab, SIM, SolverConfig, SolverResult, TwoStep
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Backend",

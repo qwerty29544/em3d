@@ -84,3 +84,46 @@ def test_mie_rcs_plane_invalid_inputs():
         em3d.mie.mie_rcs_plane(a=0.3, eps_r=2.0, k0=1.0/0.3, plane="zx")
     with pytest.raises(ValueError, match="n_phi must be"):
         em3d.mie.mie_rcs_plane(a=0.3, eps_r=2.0, k0=1.0/0.3, n_phi=0)
+
+
+# ---------------------------------------------------------------------------
+# Task 3 tests: near-field
+# ---------------------------------------------------------------------------
+
+def test_mie_field_center_equals_incident():
+    """Field at the sphere centre (r=0) equals the incident wave direction."""
+    a = 0.3
+    eps_r = 2.0
+    k0 = 1.0 / a
+    # Default: amplitude=(1,0,0), orient=(0,0,1)
+    # At r=0 the Mie series limit gives E = E0 * x̂ = (1,0,0)
+    E = em3d.mie.mie_field_at(np.array([[0.0, 0.0, 0.0]]), a, eps_r, k0)
+    np.testing.assert_allclose(E[0], [1.0, 0.0, 0.0], atol=1e-10,
+                               err_msg="Field at sphere centre should equal incident wave")
+
+
+def test_mie_field_matches_grid_wrapper(backend_numpy_double):
+    """mie_field_at and mie_field(grid) give identical values at grid nodes."""
+    a = 0.3
+    eps_r = 2.0
+    k0 = 1.0 / a
+    be = backend_numpy_double
+    grid = em3d.Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0, 0, 0), backend=be)
+    X, Y, Z = grid.coords()
+    xyz = np.stack([np.asarray(X).ravel(), np.asarray(Y).ravel(), np.asarray(Z).ravel()], axis=1)
+    E_at = em3d.mie.mie_field_at(xyz, a, eps_r, k0)
+    E_grid = em3d.mie.mie_field(grid, a, eps_r, k0)
+    E_grid_flat = E_grid.reshape(3, -1).T   # (N**3, 3)
+    np.testing.assert_allclose(E_at, E_grid_flat, atol=1e-12,
+                               err_msg="mie_field_at and mie_field must agree on grid nodes")
+
+
+def test_mie_field_at_invalid_inputs():
+    """ValueError for bad xyz shape or amplitude ∥ orient."""
+    with pytest.raises(ValueError, match="xyz must have shape"):
+        em3d.mie.mie_field_at(np.zeros((5,)), a=0.3, eps_r=2.0, k0=1.0/0.3)
+    with pytest.raises(ValueError, match="xyz must have shape"):
+        em3d.mie.mie_field_at(np.zeros((5, 2)), a=0.3, eps_r=2.0, k0=1.0/0.3)
+    with pytest.raises(ValueError, match="parallel"):
+        em3d.mie.mie_field_at(np.zeros((1, 3)), a=0.3, eps_r=2.0, k0=1.0/0.3,
+                               amplitude=(0, 0, 1), orient=(0, 0, 1))

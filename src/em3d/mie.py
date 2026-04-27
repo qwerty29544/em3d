@@ -263,3 +263,301 @@ def mie_rcs_plane(
         sigma = np.abs(S1)**2 / k0**2
 
     return phi, np.real(sigma).astype(np.float64)
+
+
+# ---------------------------------------------------------------------------
+# Private: frame rotation
+# ---------------------------------------------------------------------------
+
+def _build_frame(orient, amplitude) -> tuple:
+    """Build rotation matrix from lab frame to canonical Mie frame.
+
+    Canonical frame: propagation ẑ_can, polarisation x̂_can.
+
+    Parameters
+    ----------
+    orient    : array (3,) — propagation direction (need not be unit)
+    amplitude : array (3,) — polarisation direction (need not be unit)
+
+    Returns
+    -------
+    R  : ndarray (3, 3) — columns are x̂_can, ŷ_can, ẑ_can in lab coords
+    E0 : float — scalar amplitude magnitude |amplitude|
+    """
+    orient = np.asarray(orient, dtype=np.float64)
+    amplitude = np.asarray(amplitude, dtype=np.float64)
+    z_can = orient / np.linalg.norm(orient)
+    amp_perp = amplitude - np.dot(amplitude, z_can) * z_can
+    if np.linalg.norm(amp_perp) < 1e-12 * max(np.linalg.norm(amplitude), 1e-30):
+        raise ValueError("amplitude must not be parallel to orient")
+    x_can = amp_perp / np.linalg.norm(amp_perp)
+    y_can = np.cross(z_can, x_can)
+    R = np.column_stack([x_can, y_can, z_can])  # (3, 3)
+    E0 = float(np.linalg.norm(amplitude))
+    return R, E0
+
+
+# ---------------------------------------------------------------------------
+# Private: field in canonical frame
+# ---------------------------------------------------------------------------
+
+def _field_at_canonical(
+    xyz_can: np.ndarray,
+    a: float,
+    k0: float,
+    m: complex,
+    coeffs: dict,
+) -> np.ndarray:
+    """Total E-field (M, 3) complex128 in canonical Mie frame.
+
+    Canonical frame: wave propagates along ẑ, E ∥ x̂, unit amplitude.
+
+    Interior (r < a): transmitted field via c_n M^(1) and d_n N^(1) VSH.
+    Exterior (r >= a): E_inc + scattered field via a_n M^(3) and b_n N^(3) VSH.
+
+    Special case r=0: returns x̂ (Mie series limit).
+
+    Parameters
+    ----------
+    xyz_can : ndarray (M, 3) float64
+    a       : float — sphere radius
+    k0      : float — free-space wave number
+    m       : complex — refractive index sqrt(eps_r)
+    coeffs  : dict from mie_coefficients
+
+    Returns
+    -------
+    E : ndarray (M, 3) complex128
+    """
+    an, bn, cn, dn, nmax = (
+        coeffs["a"], coeffs["b"], coeffs["c"], coeffs["d"], coeffs["n_max"]
+    )
+    k_int = m * k0
+    M = xyz_can.shape[0]
+    E = np.zeros((M, 3), dtype=np.complex128)
+
+    x_can = xyz_can[:, 0]
+    y_can = xyz_can[:, 1]
+    z_can = xyz_can[:, 2]
+    r = np.sqrt(x_can**2 + y_can**2 + z_can**2)
+
+    # r=0: Mie series limit → E = x̂
+    zero_mask = (r == 0.0)
+    E[zero_mask, 0] = 1.0
+
+    non_zero = ~zero_mask
+    if not np.any(non_zero):
+        return E
+
+    r_nz = r[non_zero]
+    x_nz = x_can[non_zero]
+    y_nz = y_can[non_zero]
+    z_nz = z_can[non_zero]
+    rho_nz = np.sqrt(x_nz**2 + y_nz**2)
+
+    cos_theta = z_nz / r_nz
+    sin_theta = rho_nz / r_nz
+    cos_phi = np.where(rho_nz > 0, x_nz / rho_nz, 1.0)
+    sin_phi = np.where(rho_nz > 0, y_nz / rho_nz, 0.0)
+
+    # Angular functions for all non-zero points
+    pi_arr, tau_arr = _angle_functions(nmax, cos_theta)  # (nmax, Mnz)
+
+    interior = r_nz < a
+    exterior = ~interior
+
+    # ------------------------------------------------------------------
+    # INTERIOR: transmitted field
+    # ------------------------------------------------------------------
+    if np.any(interior):
+        ri = r_nz[interior]
+        cth_i = cos_theta[interior]
+        sth_i = sin_theta[interior]
+        cph_i = cos_phi[interior]
+        sph_i = sin_phi[interior]
+        pi_i = pi_arr[:, interior]    # (nmax, Mi)
+        tau_i = tau_arr[:, interior]
+        Mi = ri.shape[0]
+        Er_i = np.zeros(Mi, dtype=np.complex128)
+        Eth_i = np.zeros(Mi, dtype=np.complex128)
+        Eph_i = np.zeros(Mi, dtype=np.complex128)
+
+        for idx in range(nmax):
+            n = idx + 1
+            prefactor = (1j**n) * (2*n + 1) / (n * (n + 1))
+            k_int_r = k_int * ri
+            jn_val = spherical_jn(n, k_int_r)
+            djn_val = spherical_jn(n, k_int_r, derivative=True)
+            psi_prime_over_kr = (jn_val + k_int_r * djn_val) / k_int_r
+
+            # M^(1)_{o1n}: Er=0, Eth=cos_phi*pi_n*j_n, Eph=-sin_phi*tau_n*j_n
+            M_eth = cph_i * pi_i[idx] * jn_val
+            M_eph = -sph_i * tau_i[idx] * jn_val
+
+            # N^(1)_{e1n}:
+            #   Er  = cos_phi * pi_n * n*(n+1)*j_n/(k_int*r)
+            #   Eth = cos_phi * tau_n * psi_n'/(k_int*r)
+            #   Eph = -sin_phi * pi_n * psi_n'/(k_int*r)
+            N_er = cph_i * pi_i[idx] * n * (n + 1) * jn_val / k_int_r
+            N_eth = cph_i * tau_i[idx] * psi_prime_over_kr
+            N_eph = -sph_i * pi_i[idx] * psi_prime_over_kr
+
+            cn_val = cn[idx]
+            dn_val = dn[idx]
+            # E_int = sum i^n * (2n+1)/(n(n+1)) * [c_n M^(1) - i*d_n N^(1)]
+            Er_i  += prefactor * (-1j * dn_val * N_er)
+            Eth_i += prefactor * (cn_val * M_eth - 1j * dn_val * N_eth)
+            Eph_i += prefactor * (cn_val * M_eph - 1j * dn_val * N_eph)
+
+        # Spherical → Cartesian
+        Ex_i = sth_i*cph_i*Er_i + cth_i*cph_i*Eth_i - sph_i*Eph_i
+        Ey_i = sth_i*sph_i*Er_i + cth_i*sph_i*Eth_i + cph_i*Eph_i
+        Ez_i = cth_i*Er_i - sth_i*Eth_i
+
+        idx_int = np.where(non_zero)[0][interior]
+        E[idx_int, 0] = Ex_i
+        E[idx_int, 1] = Ey_i
+        E[idx_int, 2] = Ez_i
+
+    # ------------------------------------------------------------------
+    # EXTERIOR: E_inc + E_scat
+    # ------------------------------------------------------------------
+    if np.any(exterior):
+        re = r_nz[exterior]
+        cth_e = cos_theta[exterior]
+        sth_e = sin_theta[exterior]
+        cph_e = cos_phi[exterior]
+        sph_e = sin_phi[exterior]
+        z_e = z_nz[exterior]
+        pi_e = pi_arr[:, exterior]
+        tau_e = tau_arr[:, exterior]
+        Me = re.shape[0]
+        Er_sc = np.zeros(Me, dtype=np.complex128)
+        Eth_sc = np.zeros(Me, dtype=np.complex128)
+        Eph_sc = np.zeros(Me, dtype=np.complex128)
+
+        for idx in range(nmax):
+            n = idx + 1
+            prefactor = ((-1j)**n) * (2*n + 1) / (n * (n + 1))
+            k0_r = k0 * re
+            jn_val = spherical_jn(n, k0_r)
+            djn_val = spherical_jn(n, k0_r, derivative=True)
+            yn_val = spherical_yn(n, k0_r)
+            dyn_val = spherical_yn(n, k0_r, derivative=True)
+            hn_val = jn_val + 1j * yn_val
+            dhn_val = djn_val + 1j * dyn_val
+            # xi_n'(k0*r) / (k0*r)
+            xi_prime_over_kr = (hn_val + k0_r * dhn_val) / k0_r
+
+            # M^(3)_{o1n}: Er=0, Eth=cos_phi*pi_n*h_n, Eph=-sin_phi*tau_n*h_n
+            M_eth = cph_e * pi_e[idx] * hn_val
+            M_eph = -sph_e * tau_e[idx] * hn_val
+
+            # N^(3)_{e1n}:
+            #   Er  = cos_phi * pi_n * n*(n+1) * h_n / (k0*r)
+            #   Eth = cos_phi * tau_n * xi_n'/(k0*r)
+            #   Eph = -sin_phi * pi_n * xi_n'/(k0*r)
+            N_er = cph_e * pi_e[idx] * n * (n + 1) * hn_val / k0_r
+            N_eth = cph_e * tau_e[idx] * xi_prime_over_kr
+            N_eph = -sph_e * pi_e[idx] * xi_prime_over_kr
+
+            an_val = an[idx]
+            bn_val = bn[idx]
+            # E_scat = sum (-i)^n * (2n+1)/(n(n+1)) * [i*a_n M^(3) + b_n N^(3)]
+            Er_sc  += prefactor * bn_val * N_er           # M^(3) has Er=0
+            Eth_sc += prefactor * (1j*an_val*M_eth + bn_val*N_eth)
+            Eph_sc += prefactor * (1j*an_val*M_eph + bn_val*N_eph)
+
+        # Scattered: sph → cart
+        Ex_sc = sth_e*cph_e*Er_sc + cth_e*cph_e*Eth_sc - sph_e*Eph_sc
+        Ey_sc = sth_e*sph_e*Er_sc + cth_e*sph_e*Eth_sc + cph_e*Eph_sc
+        Ez_sc = cth_e*Er_sc - sth_e*Eth_sc
+
+        # Incident: E_inc = exp(i*k0*z) * x̂ in canonical frame
+        E_inc_x = np.exp(1j * k0 * z_e)
+
+        idx_ext = np.where(non_zero)[0][exterior]
+        E[idx_ext, 0] = E_inc_x + Ex_sc
+        E[idx_ext, 1] = Ey_sc
+        E[idx_ext, 2] = Ez_sc
+
+    return E
+
+
+# ---------------------------------------------------------------------------
+# Public: near-field
+# ---------------------------------------------------------------------------
+
+def mie_field_at(
+    xyz,
+    a: float,
+    eps_r: complex,
+    k0: float,
+    amplitude=(1, 0, 0),
+    orient=(0, 0, 1),
+) -> np.ndarray:
+    """Total electric field at arbitrary Cartesian observation points.
+
+    Parameters
+    ----------
+    xyz       : array (M, 3) float — Cartesian observation coordinates
+    a         : float   — sphere radius (> 0)
+    eps_r     : complex — relative permittivity of sphere
+    k0        : float   — free-space wave number (> 0)
+    amplitude : array (3,) — polarisation direction of incident wave
+    orient    : array (3,) — propagation direction of incident wave
+
+    Returns
+    -------
+    ndarray (M, 3) complex128
+        r < a : transmitted (internal) Mie field
+        r >= a : E_inc + E_scat (total field outside)
+    """
+    _validate_inputs(a, eps_r, k0)
+    xyz = np.asarray(xyz, dtype=np.float64)
+    if xyz.ndim != 2 or xyz.shape[1] != 3:
+        raise ValueError(f"xyz must have shape (M, 3), got shape={xyz.shape}")
+    R, E0 = _build_frame(orient, amplitude)
+    m = np.sqrt(complex(eps_r))
+    coeffs = mie_coefficients(a, eps_r, k0)
+
+    # Rotate to canonical frame: xyz_can = xyz @ R
+    # (columns of R are canonical axes expressed in lab; xyz @ R gives canonical coords)
+    xyz_can = xyz @ R   # (M, 3)
+
+    E_can = _field_at_canonical(xyz_can, a, k0, m, coeffs)  # (M, 3)
+    E_lab = E0 * (E_can @ R.T)  # (M, 3) back to lab frame
+    return E_lab.astype(np.complex128)
+
+
+def mie_field(
+    grid,
+    a: float,
+    eps_r: complex,
+    k0: float,
+    amplitude=(1, 0, 0),
+    orient=(0, 0, 1),
+) -> np.ndarray:
+    """Total electric field on an em3d Grid — direct comparison with result.u.
+
+    Parameters
+    ----------
+    grid      : em3d.Grid
+    a         : float   — sphere radius (> 0)
+    eps_r     : complex — relative permittivity
+    k0        : float   — free-space wave number (> 0)
+    amplitude : array (3,) — polarisation direction
+    orient    : array (3,) — propagation direction
+
+    Returns
+    -------
+    ndarray (3, Nx, Ny, Nz) complex128
+    """
+    X, Y, Z = grid.coords()
+    X_np = np.asarray(X, dtype=np.float64)
+    Y_np = np.asarray(Y, dtype=np.float64)
+    Z_np = np.asarray(Z, dtype=np.float64)
+    shape = X_np.shape  # (Nx, Ny, Nz)
+    xyz = np.stack([X_np.ravel(), Y_np.ravel(), Z_np.ravel()], axis=1)  # (N^3, 3)
+    E_flat = mie_field_at(xyz, a, eps_r, k0, amplitude=amplitude, orient=orient)  # (N^3, 3)
+    return E_flat.T.reshape(3, *shape)  # (3, Nx, Ny, Nz)

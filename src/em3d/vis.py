@@ -4,6 +4,8 @@ Public API
 ----------
 plot_rcs(phi, sigma, *, title=None, filename=None) -> (fig, ax)
 plot_rcs_polar(phi, sigma, *, db=False, title=None, filename=None) -> (fig, ax)
+plot_rcs_comparison(phi, sigma_num, sigma_mie, *, labels=("em3d", "Mie"), title=None, filename=None) -> (fig, ax)
+plot_rcs_comparison_polar(phi, sigma_num, sigma_mie, *, labels=("em3d", "Mie"), db=False, title=None, filename=None) -> (fig, ax)
 plot_field_slice(u, grid, *, plane="xy", idx=None, part="real", stride=1, cmap="RdBu_r", title=None, filename=None) -> (fig, ax)
 plot_field_volume(u, grid, *, part="real", stride=2, elev=30.0, azim=-60.0, cmap="RdBu_r", title=None, filename=None) -> (fig, ax)
 """
@@ -13,7 +15,14 @@ import warnings
 
 import numpy as np
 
-__all__ = ["plot_rcs", "plot_rcs_polar", "plot_field_slice", "plot_field_volume"]
+__all__ = [
+    "plot_rcs",
+    "plot_rcs_polar",
+    "plot_rcs_comparison",
+    "plot_rcs_comparison_polar",
+    "plot_field_slice",
+    "plot_field_volume",
+]
 
 
 def _require_matplotlib():
@@ -25,6 +34,19 @@ def _require_matplotlib():
         raise ImportError(
             "Visualization requires matplotlib. Install with: pip install em3d[vis]"
         ) from None
+
+
+def _validate_curve_pair(phi, sigma_num, sigma_mie) -> tuple:
+    phi = np.asarray(phi, dtype=np.float64)
+    sigma_num = np.asarray(sigma_num, dtype=np.float64)
+    sigma_mie = np.asarray(sigma_mie, dtype=np.float64)
+    if phi.ndim != 1:
+        raise ValueError(f"phi must be 1-D, got shape={phi.shape}")
+    if sigma_num.shape != phi.shape:
+        raise ValueError(f"sigma_num must have shape {phi.shape}, got {sigma_num.shape}")
+    if sigma_mie.shape != phi.shape:
+        raise ValueError(f"sigma_mie must have shape {phi.shape}, got {sigma_mie.shape}")
+    return phi, sigma_num, sigma_mie
 
 
 def plot_rcs(
@@ -62,6 +84,36 @@ def plot_rcs(
     return fig, ax
 
 
+def plot_rcs_comparison(
+    phi,
+    sigma_num,
+    sigma_mie,
+    *,
+    labels: tuple[str, str] = ("em3d", "Mie"),
+    title: str | None = None,
+    filename: str | None = None,
+) -> tuple:
+    """Cartesian comparison of numerical and Mie RCS curves on the same scale.
+
+    Pass raw or pre-normalized curves explicitly. The function does not
+    normalize data implicitly, so the caller controls the comparison scale.
+    """
+    plt = _require_matplotlib()
+    phi, sigma_num, sigma_mie = _validate_curve_pair(phi, sigma_num, sigma_mie)
+    fig, ax = plt.subplots()
+    ax.plot(phi, sigma_num, label=labels[0])
+    ax.plot(phi, sigma_mie, label=labels[1], linestyle="--")
+    ax.set_xlabel("phi (rad)")
+    ax.set_ylabel("sigma")
+    ax.grid(True)
+    ax.legend()
+    if title is not None:
+        ax.set_title(title)
+    if filename is not None:
+        fig.savefig(filename, dpi=150, bbox_inches="tight")
+    return fig, ax
+
+
 def plot_rcs_polar(
     phi,
     sigma,
@@ -90,11 +142,50 @@ def plot_rcs_polar(
     sigma = np.asarray(sigma, dtype=np.float64)
     fig, ax = plt.subplots(subplot_kw={"projection": "polar"})
     if db:
-        r = 10.0 * np.log10(sigma / sigma.max() + 1e-30)
+        sigma_max = float(sigma.max()) if sigma.size else 0.0
+        if sigma_max > 0.0:
+            r = 10.0 * np.log10(sigma / sigma_max + 1e-30)
+        else:
+            r = np.zeros_like(sigma)
         ax.plot(phi, r)
         ax.set_ylabel("sigma (dB rel. max)")
     else:
         ax.plot(phi, sigma)
+    if title is not None:
+        ax.set_title(title)
+    if filename is not None:
+        fig.savefig(filename, dpi=150, bbox_inches="tight")
+    return fig, ax
+
+
+def plot_rcs_comparison_polar(
+    phi,
+    sigma_num,
+    sigma_mie,
+    *,
+    labels: tuple[str, str] = ("em3d", "Mie"),
+    db: bool = False,
+    title: str | None = None,
+    filename: str | None = None,
+) -> tuple:
+    """Polar comparison of numerical and Mie RCS curves on the same scale."""
+    plt = _require_matplotlib()
+    phi, sigma_num, sigma_mie = _validate_curve_pair(phi, sigma_num, sigma_mie)
+    fig, ax = plt.subplots(subplot_kw={"projection": "polar"})
+    if db:
+        num_max = float(sigma_num.max()) if sigma_num.size else 0.0
+        mie_max = float(sigma_mie.max()) if sigma_mie.size else 0.0
+        if num_max > 0.0:
+            sigma_num = 10.0 * np.log10(sigma_num / num_max + 1e-30)
+        else:
+            sigma_num = np.zeros_like(sigma_num)
+        if mie_max > 0.0:
+            sigma_mie = 10.0 * np.log10(sigma_mie / mie_max + 1e-30)
+        else:
+            sigma_mie = np.zeros_like(sigma_mie)
+    ax.plot(phi, sigma_num, label=labels[0])
+    ax.plot(phi, sigma_mie, label=labels[1], linestyle="--")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1.1))
     if title is not None:
         ax.set_title(title)
     if filename is not None:

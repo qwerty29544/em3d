@@ -33,9 +33,9 @@ def scatter_integral_direct(
             f"directions must have shape (M, 3), got {directions.shape}"
         )
     expected_u_shape = (3,) + tuple(problem.grid.N)
-    u_arr = np.asarray(u)
-    if u_arr.shape != expected_u_shape:
-        raise ValueError(f"u must have shape {expected_u_shape}, got {u_arr.shape}")
+    u_shape = getattr(u, "shape", None)
+    if u_shape != expected_u_shape:
+        raise ValueError(f"u must have shape {expected_u_shape}, got {u_shape}")
     grid = problem.grid
     be = grid.backend
     xp = be.xp

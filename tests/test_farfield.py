@@ -52,6 +52,20 @@ def test_rcs_nonnegative():
     assert result >= 0.0
 
 
+def test_scatter_integral_shape_validation_does_not_force_numpy():
+    """Shape errors should be reported before implicit CPU conversion."""
+    problem = _make_problem()
+
+    class NoImplicitArray:
+        shape = (2,) + problem.grid.N
+
+        def __array__(self, dtype=None):
+            raise AssertionError("scatter_integral should not coerce before shape validation")
+
+    with pytest.raises(ValueError, match="u must have shape"):
+        scatter_integral(NoImplicitArray(), problem, np.array([[1.0, 0.0, 0.0]]), method="direct")
+
+
 # --- Test 3: single cell analytic ---
 
 def test_single_cell_analytic():

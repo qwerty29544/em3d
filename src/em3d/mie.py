@@ -148,3 +148,118 @@ def mie_cross_sections(a: float, eps_r: complex, k0: float) -> dict:
     )
     sigma_abs = sigma_ext - sigma_scat
     return {"scat": sigma_scat, "ext": sigma_ext, "abs": sigma_abs}
+
+
+# ---------------------------------------------------------------------------
+# Private: angular functions
+# ---------------------------------------------------------------------------
+
+def _angle_functions(n_max: int, cos_theta: np.ndarray) -> tuple:
+    """Compute pi_n(cos_theta) and tau_n(cos_theta) for n = 1..n_max.
+
+    Recurrence:
+        pi_1 = 1
+        pi_n = ((2n-1)/(n-1)) * cos_theta * pi_{n-1} - (n/(n-1)) * pi_{n-2}
+        tau_n = n * cos_theta * pi_n - (n+1) * pi_{n-1}
+
+    Parameters
+    ----------
+    n_max     : int — truncation order
+    cos_theta : ndarray (M,) float — cosines of scattering angles
+
+    Returns
+    -------
+    pi_arr  : ndarray (n_max, M) float64
+    tau_arr : ndarray (n_max, M) float64
+    """
+    M = len(cos_theta)
+    pi_arr = np.zeros((n_max, M), dtype=np.float64)
+    tau_arr = np.zeros((n_max, M), dtype=np.float64)
+
+    pi_prev2 = np.zeros(M, dtype=np.float64)   # pi_{n-2}
+    pi_prev1 = np.ones(M, dtype=np.float64)    # pi_1 = 1
+
+    for idx in range(n_max):
+        n = idx + 1
+        if n == 1:
+            pi_n = pi_prev1.copy()
+        else:
+            pi_n = ((2*n - 1) / (n - 1)) * cos_theta * pi_prev1 - (n / (n - 1)) * pi_prev2
+        tau_n = n * cos_theta * pi_n - (n + 1) * pi_prev1
+        pi_arr[idx] = pi_n
+        tau_arr[idx] = tau_n
+        pi_prev2 = pi_prev1
+        pi_prev1 = pi_n
+
+    return pi_arr, tau_arr
+
+
+# ---------------------------------------------------------------------------
+# Public: bistatic RCS in a coordinate plane
+# ---------------------------------------------------------------------------
+
+def mie_rcs_plane(
+    a: float,
+    eps_r: complex,
+    k0: float,
+    n_phi: int = 180,
+    plane: str = "xy",
+) -> tuple:
+    """Bistatic RCS over n_phi equally-spaced directions in a coordinate plane.
+
+    Mirrors the interface of em3d.farfield.rcs_plane.
+    Incident wave: E ∥ x̂, propagation ∥ ẑ.
+
+    Parameters
+    ----------
+    a     : float   — sphere radius (> 0)
+    eps_r : complex — relative permittivity
+    k0    : float   — free-space wave number (> 0)
+    n_phi : int     — number of angles in [0, 2π)
+    plane : str     — "xy" | "xz" | "yz"
+
+    Returns
+    -------
+    (phi, sigma) : both ndarray (n_phi,) float64
+    """
+    _validate_inputs(a, eps_r, k0)
+    if plane not in ("xy", "xz", "yz"):
+        raise ValueError(f"plane must be 'xy', 'xz', or 'yz', got {plane!r}")
+    if n_phi < 1:
+        raise ValueError(f"n_phi must be >= 1, got {n_phi}")
+
+    coeffs = mie_coefficients(a, eps_r, k0)
+    an, bn, nmax = coeffs["a"], coeffs["b"], coeffs["n_max"]
+    ns = np.arange(1, nmax + 1, dtype=np.float64)
+    weights = (2 * ns + 1) / (ns * (ns + 1))  # (n_max,)
+
+    phi = np.linspace(0.0, 2.0 * np.pi, n_phi, endpoint=False)
+
+    if plane == "xy":
+        # theta_sph = pi/2 for all phi (transverse to propagation ẑ)
+        cos_theta = np.zeros(n_phi, dtype=np.float64)
+        pi_arr, tau_arr = _angle_functions(nmax, cos_theta)
+        # S1 and S2 at theta=pi/2
+        S1 = np.einsum("n,nm->m", weights * an, pi_arr) + np.einsum("n,nm->m", weights * bn, tau_arr)
+        S2 = np.einsum("n,nm->m", weights * an, tau_arr) + np.einsum("n,nm->m", weights * bn, pi_arr)
+        sigma = (np.abs(S2)**2 * np.cos(phi)**2 + np.abs(S1)**2 * np.sin(phi)**2) / k0**2
+
+    elif plane == "xz":
+        # direction (cos(phi), 0, sin(phi)): phi_sph=0, theta_sph = pi/2 - phi
+        theta_sph = np.pi / 2.0 - phi
+        cos_theta = np.cos(theta_sph)
+        pi_arr, tau_arr = _angle_functions(nmax, cos_theta)
+        # phi_sph=0 → cos²(phi_sph)=1, sin²(phi_sph)=0 → sigma = |S2|²/k0²
+        S2 = np.einsum("n,nm->m", weights * an, tau_arr) + np.einsum("n,nm->m", weights * bn, pi_arr)
+        sigma = np.abs(S2)**2 / k0**2
+
+    else:  # "yz"
+        # direction (0, cos(phi), sin(phi)): phi_sph=pi/2, theta_sph = pi/2 - phi
+        theta_sph = np.pi / 2.0 - phi
+        cos_theta = np.cos(theta_sph)
+        pi_arr, tau_arr = _angle_functions(nmax, cos_theta)
+        # phi_sph=pi/2 → cos²=0, sin²=1 → sigma = |S1|²/k0²
+        S1 = np.einsum("n,nm->m", weights * an, pi_arr) + np.einsum("n,nm->m", weights * bn, tau_arr)
+        sigma = np.abs(S1)**2 / k0**2
+
+    return phi, np.real(sigma).astype(np.float64)

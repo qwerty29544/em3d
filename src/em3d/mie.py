@@ -136,7 +136,6 @@ def mie_cross_sections(a: float, eps_r: complex, k0: float) -> dict:
     -------
     dict: {"scat": float, "ext": float, "abs": float}
     """
-    _validate_inputs(a, eps_r, k0)
     coeffs = mie_coefficients(a, eps_r, k0)
     an, bn, nmax = coeffs["a"], coeffs["b"], coeffs["n_max"]
     ns = np.arange(1, nmax + 1, dtype=np.float64)
@@ -144,8 +143,8 @@ def mie_cross_sections(a: float, eps_r: complex, k0: float) -> dict:
     sigma_scat = float(np.real(
         (2 * np.pi / k0**2) * np.sum(weights * (np.abs(an)**2 + np.abs(bn)**2))
     ))
-    sigma_ext = float(np.real(
+    sigma_ext = float(
         (2 * np.pi / k0**2) * np.sum(weights * np.real(an + bn))
-    ))
+    )
     sigma_abs = sigma_ext - sigma_scat
     return {"scat": sigma_scat, "ext": sigma_ext, "abs": sigma_abs}

@@ -20,21 +20,26 @@ def green_helmholtz(R, k: float, eps: float = 1e-30):
 
 
 def b_coeff(x, y, *, k: float, dv: float):
-    """Discrete b-coefficient for the volume integral operator.
+    """Discrete 3x3 dyadic b-coefficient for the volume integral operator.
 
     For a pair of cell centres x, y ∈ R^3 with cell volume dv,
-    returns dv · G(|x-y|, k) for x≠y, or the excluded-sphere self-interaction
-    integral_0^{r0} exp(ikr)·r dr for x=y, where r0 = (3·dv/(4π))^{1/3}.
+    returns the notebook dyadic Green block for x≠y:
+
+        dv * G(R) * [C1(R) * alpha alpha^T + C2(R) * I],
+
+    where R = |x-y|, alpha = (x-y)/R,
+    C1 = 3/R^2 - 3ik/R - k^2, and C2 = k^2 + ik/R - 1/R^2.
+    For x=y, returns the singular self-term limit -I/3.
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
-    r = float(np.linalg.norm(x - y))
+    diff = x - y
+    r = float(np.linalg.norm(diff))
+    identity = np.eye(3, dtype=np.complex128)
     if r < 1e-15:
-        # Excluded-sphere self-interaction: ∫₀^r₀ exp(ikr)·r dr, r0=(3dv/4π)^{1/3}.
-        # No dv factor: the spherical integral already represents the full cell
-        # contribution; dv is implicit through r0 = (3dv/4π)^{1/3}.
-        r0 = (3.0 * dv / (4.0 * np.pi)) ** (1.0 / 3.0)
-        if abs(k) < 1e-15:
-            return r0 * r0 / 2.0
-        return np.exp(1j * k * r0) * (r0 / (1j * k) - 1.0 / (k * k)) + 1.0 / (k * k)
-    return dv * green_helmholtz(r, k=k)
+        return (-1.0 / 3.0) * identity
+    alpha = diff / r
+    alpha_outer = alpha[:, np.newaxis] * alpha[np.newaxis, :]
+    coef_1 = (3.0 / (r * r)) - (3.0j * k / r) - (k * k)
+    coef_2 = (k * k) + (1.0j * k / r) - (1.0 / (r * r))
+    return green_helmholtz(r, k=k) * dv * (coef_1 * alpha_outer + coef_2 * identity)

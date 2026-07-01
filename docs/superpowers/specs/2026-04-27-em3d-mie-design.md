@@ -270,7 +270,7 @@ $$\begin{pmatrix}E_x\\E_y\\E_z\end{pmatrix} = \begin{pmatrix}\sin\theta\cos\varp
 
 ### Связь с `result.u`
 
-Уравнение em3d $(I + B\eta)\mathbf{u} = \mathbf{f}$ — это уравнение Липпмана–Швингера для полного поля: $\mathbf{u} = \mathbf{E}_{\text{total}}$ всюду. Следовательно `mie_field(grid, ...)` даёт прямой эталон для сравнения с `result.u`.
+Уравнение em3d $(I - B\eta)\mathbf{u} = \mathbf{f}$ — это уравнение Липпмана–Швингера для полного поля: $\mathbf{u} = \mathbf{E}_{\text{total}}$ всюду. Следовательно `mie_field(grid, ...)` даёт прямой эталон для сравнения с `result.u`.
 
 ---
 
@@ -322,7 +322,7 @@ $\sigma_{xy}(\varphi) = \sigma_{xy}(\varphi + \pi)$ для всех $\varphi$ (�
 
 **`test_mie_verification_rcs_normalized_shape`**
 
-Этот gate сравнивает форму диаграммы ЭПР после нормировки на максимум, а абсолютный масштаб фиксирует отдельной диагностикой. Причина: текущий численный решатель использует скалярное ядро Грина и voxelized sphere, поэтому абсолютная ЭПР на этом этапе даёт систематический scale mismatch около 20–30%, тогда как угловая форма уже совпадает.
+Этот gate сравнивает форму диаграммы ЭПР после нормировки на максимум, а абсолютный масштаб фиксирует отдельной диагностикой. Причина: даже после восстановления dyadic Green kernel абсолютная ЭПР зависит от voxelized sphere, эффективного радиуса и дискретного self-term, тогда как угловая форма уже является более устойчивым validation signal.
 
 ```python
 @pytest.mark.parametrize("eps_r,k0a", [(2.0, 1.0), (1.5, 0.5)])
@@ -353,7 +353,7 @@ def test_mie_verification_rcs_normalized_shape(eps_r, k0a, backend_numpy_double)
     assert 0.5 <= comparison["scale_ratio"] <= 2.0
 ```
 
-Строгий абсолютный gate `max(abs(sigma_num - sigma_mie)) / max(sigma_mie) <= 0.10` переносится в следующий этап после проверки эффективного радиуса voxelized sphere и перехода к полному dyadic Green operator.
+Строгий абсолютный gate `max(abs(sigma_num - sigma_mie)) / max(sigma_mie) <= 0.10` переносится в следующий этап после проверки эффективного радиуса voxelized sphere и дискретного self-term.
 
 ### Сравнительная визуализация ЭПР
 

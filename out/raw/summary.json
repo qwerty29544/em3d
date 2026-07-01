@@ -1,0 +1,15 @@
+{
+  "mode": "quick",
+  "n_values": [
+    8,
+    16,
+    24
+  ],
+  "solver_names": [
+    "SIM",
+    "BiCGStab",
+    "TwoStep"
+  ],
+  "num_solver_runs": 9,
+  "output_root": "out"
+}

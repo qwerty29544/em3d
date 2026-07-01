@@ -32,8 +32,8 @@ def _cell_centres(grid: Grid) -> np.ndarray:
 def B_operator_matrix(grid: Grid, *, k: float, volume: float) -> np.ndarray:
     """Assemble the dense 3Ncells × 3Ncells matrix of the volume-integral operator.
 
-    Uses scalar b_coeff and a block-diagonal 3×3 identity per cell pair (isotropic
-    kernel, as in the notebook's `B_operator_matrix` without ε multiplication).
+    Uses the dyadic 3×3 ``b_coeff`` block from the original notebook
+    ``B_operator_matrix`` without ε multiplication.
     `volume` is accepted for API symmetry with the FFT operator but is unused here;
     cell volume is always taken from grid.dv.
     """
@@ -41,9 +41,7 @@ def B_operator_matrix(grid: Grid, *, k: float, volume: float) -> np.ndarray:
     Ncells = centres.shape[0]
     dv = grid.dv
     M = np.zeros((3 * Ncells, 3 * Ncells), dtype=np.complex128)
-    identity3 = np.eye(3, dtype=np.complex128)
     for i in range(Ncells):
         for j in range(Ncells):
-            coeff = b_coeff(centres[i], centres[j], k=k, dv=dv)
-            M[3 * i : 3 * i + 3, 3 * j : 3 * j + 3] = coeff * identity3
+            M[3 * i : 3 * i + 3, 3 * j : 3 * j + 3] = b_coeff(centres[i], centres[j], k=k, dv=dv)
     return M

@@ -11,14 +11,14 @@
 
 Пакет `em3d` решает объёмное интегральное уравнение (ОИУ) задачи рассеяния ЭМ-волн на трёхмерной диэлектрической структуре:
 
-$$(\mathbf{I} + \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
+$$(\mathbf{I} - \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
 
 | Символ | Смысл |
 |--------|-------|
 | $\mathbf{u}(\mathbf{r})$ | полное электрическое поле внутри расчётной области |
 | $\mathbf{f}(\mathbf{r})$ | падающая плоская волна |
 | $\boldsymbol{\eta}(\mathbf{r}) = \boldsymbol{\varepsilon}(\mathbf{r}) - \mathbf{I}$ | тензор диэлектрического контраста |
-| $\mathbf{B}$ | оператор объёмного интеграла с функцией Грина Гельмгольца $G(R) = \dfrac{e^{ik_0 R}}{4\pi R}$ |
+| $\mathbf{B}$ | диадический 3×3 оператор объёмного интеграла, построенный через $G(R) = \dfrac{e^{ik_0 R}}{4\pi R}$, $I$ и $\hat r\hat r^T$ |
 
 Оператор $\mathbf{B}$ применяется как БПФ-свёртка на **удвоенном параллелепипеде $\Pi_2$**, что устраняет артефакты периодизации и даёт сложность $\mathcal{O}(N \log N)$ на итерацию.
 
@@ -26,14 +26,14 @@ $$(\mathbf{I} + \mathbf{B}\boldsymbol{\eta})\,\mathbf{u} = \mathbf{f}$$
 
 ## Возможности
 
-- **БПФ-матвек** — тёплицева свёртка на $\Pi_2$; плотная матрица не хранится.
+- **БПФ-матвек** — трёхуровневая блочно-тёплицева свёртка диадического 3×3 Green-ядра на $\Pi_2$; плотная матрица не хранится.
 - **Три итерационных метода** — SIM/MSGD, BiCGStab, двухшаговый градиентный спуск.
-- **Параметр $\gamma_0$** — оптимальный итерационный параметр через выпуклую оболочку и наименьшую описанную окружность выборки спектра.
+- **Параметр $\gamma_0$** — оптимальный итерационный параметр через спектр исходной dense-матрицы на грубой сетке, выпуклую оболочку, окружность минимального угла видимости и визуальную диагностику.
 - **Два бэкенда** — NumPy (CPU) и CuPy (GPU/CUDA) с единым API.
 - **Две точности** — `float64/complex128` (двойная) и `float32/complex64` (одинарная).
 - **Типизирован** — маркер `py.typed` (PEP 561), аннотированный публичный API.
 - **Аналитический эталон Ми** — `em3d.mie`: коэффициенты, сечения, ЭПР, ближнее поле и сравнение численной ЭПР с аналитической кривой для однородного изотропного шара.
-- **Визуализация** — `em3d.vis`: срезы поля с квиверами (`plot_field_slice`), 3D-объём стрелок (`plot_field_volume`), диаграммы ЭПР в декартовых и полярных координатах (`plot_rcs`, `plot_rcs_polar`, `plot_rcs_comparison`, `plot_rcs_comparison_polar`).
+- **Визуализация** — `em3d.vis`: раздельные скалярные и векторные графики поля в 2D/3D (`plot_field_scalar_slice`, `plot_field_vector_slice`, `plot_field_scalar_volume`, `plot_field_vector_volume`), диаграммы ЭПР в декартовых и полярных координатах (`plot_rcs`, `plot_rcs_polar`, `plot_rcs_comparison`, `plot_rcs_comparison_polar`), спектр и окружность $\gamma_0$ (`plot_gamma0_spectrum`).
 
 ---
 
@@ -192,54 +192,67 @@ plot_rcs_comparison_polar(
 plt.show()
 ```
 
-### Визуализация среза поля
+### Визуализация поля
 
-`plot_field_slice` строит цветовую карту $\|\mathbf{u}\|$ на срезе сетки и накладывает квивер в-плоскости с автоматически масштабированными стрелками.
+Скалярные и векторные графики строятся отдельными функциями, чтобы не смешивать фоновые карты и стрелочные поля в одной перегруженной картинке.
 
 ```python
-from em3d.vis import plot_field_slice
+from em3d.vis import (
+    plot_field_scalar_slice,
+    plot_field_scalar_volume,
+    plot_field_vector_slice,
+    plot_field_vector_volume,
+)
 
 u = np.asarray(result.u)   # (3, Nx, Ny, Nz) complex128
 
-# Срез в плоскости xy по модулю поля; децимация 2× для читаемых стрелок
-fig, ax = plot_field_slice(u, grid, plane="xy", part="abs", stride=2)
+# 2D: скалярная карта нормы поля на срезе xy
+fig, ax = plot_field_scalar_slice(u, grid, plane="xy", part="abs")
 plt.show()
 
-# Реальная часть, срез xz на индексе 8
-fig, ax = plot_field_slice(u, grid, plane="xz", part="real", idx=8)
+# 2D: только векторное поле на том же срезе
+fig, ax = plot_field_vector_slice(u, grid, plane="xy", part="real", stride=2)
 plt.show()
 
-# Сохранить
-plot_field_slice(u, grid, plane="xy", part="abs", stride=2, filename="field_xy.png")
+# 3D: скалярный scatter по норме поля
+fig, ax = plot_field_scalar_volume(u, grid, part="abs", stride=2)
+plt.show()
+
+# 3D: только векторный объём
+fig, ax = plot_field_vector_volume(u, grid, part="real", stride=2)
+plt.show()
+
+# Можно сохранить любой график
+plot_field_scalar_slice(u, grid, plane="xy", part="abs", filename="field_scalar_xy.png")
 ```
 
-Параметр `part` принимает значения `"real"` / `"imag"` / `"abs"`. Фон всегда показывает полную трёхмерную норму $\|\mathbf{F}\|$; стрелки — проекцию вектора в плоскость среза.
+Параметр `part` принимает значения `"real"` / `"imag"` / `"abs"`. Для скалярных графиков `component=None` означает норму вектора $\|\mathbf{F}\|$, а `component="x"`, `"y"` или `"z"` выбирает отдельную компоненту. Старые функции `plot_field_slice` и `plot_field_volume` сохранены для совместимости: первая строит комбинированный 2D-график, вторая является обёрткой над `plot_field_vector_volume`.
 
 ---
 
 ### SIM с оптимальным параметром $\gamma_0$
 
 ```python
-import em3d.gamma0 as g0
+import matplotlib.pyplot as plt
 
-# Берём несколько значений оператора для оценки спектра B·η
-samples = []
-rng = np.random.default_rng(42)
-for _ in range(30):
-    v    = be.array((rng.standard_normal((3,) + grid.N)
-                     + 1j * rng.standard_normal((3,) + grid.N)).astype(np.complex128))
-    Av   = np.asarray(op.matvec(v))
-    v_np = np.asarray(v)
-    # приближение собственного значения B·η через отношение Рэлея
-    num = np.vdot(v_np.ravel(), (Av - v_np).ravel())
-    den = np.vdot(v_np.ravel(), v_np.ravel())
-    if abs(den) > 0:
-        samples.append(complex(num / den))
+# Спектр берётся у исходного оператора H = I - B·η на грубой dense-сетке.
+# Не используйте диагональ FFT-embedding как спектр H: это другой циркулянтный оператор.
+analysis = em3d.gamma0.estimate_from_problem(problem, coarse_N=(4, 4, 4))
 
-params  = g0.find_params(samples)          # {"mu": ..., "radius": ...}
-cfg_sim = em3d.SolverConfig(max_iter=500, rtol=1e-8,
-                             mu=params["mu"], radius=params["radius"])
-result  = em3d.SIM(cfg_sim).solve(op, wave)
+cfg_sim = em3d.SolverConfig(
+    max_iter=500,
+    rtol=1e-8,
+    **analysis.as_solver_config_kwargs(),
+)
+result = em3d.SIM(cfg_sim).solve(op, wave)
+
+print(f"mu={analysis.mu:.6g}, radius={analysis.radius:.6g}, rho={analysis.rho:.3f}")
+
+fig, ax = em3d.vis.plot_gamma0_spectrum(
+    analysis,
+    title="Спектр грубого оператора и окружность gamma0",
+)
+plt.show()
 ```
 
 ### GPU-бэкенд
@@ -350,11 +363,11 @@ eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
 | `em3d.wave` | `flat_wave_vec` | Выборка плоской волны на сетке |
 | `em3d.problem` | `Problem` | Контейнер: сетка + $\boldsymbol{\varepsilon}$ + волна + $k_0$ |
 | `em3d.operator` | `Operator` | БПФ-оператор ОИУ: `matvec` $(\mathbf{A})$, `rmatvec` $(\mathbf{A}^\dagger)$, `to_dense` |
-| `em3d.gamma0` | `find_params`, `sequential_chain`, `compute_circle_*` | $\gamma_0$ через выпуклую оболочку + МОО |
+| `em3d.gamma0` | `find_params`, `analyze_spectrum`, `estimate_from_problem`, `coarse_operator_matrix`, `sequential_chain`, `compute_circle_*` | $\gamma_0$ через грубый dense-спектр исходного оператора, выпуклую оболочку и окружность минимального угла видимости |
 | `em3d.farfield` | `rcs`, `rcs_plane` | ЭПР в произвольном направлении и кривая ЭПР в координатной плоскости |
 | `em3d.solvers` | `SIM`, `BiCGStab`, `TwoStep`, `SolverConfig`, `SolverResult`, `BaseSolver` | Итерационные методы |
 | `em3d.mie` | `mie_coefficients`, `mie_cross_sections`, `mie_rcs_plane`, `compare_rcs_plane`, `mie_field_at`, `mie_field` | Аналитический эталон Ми и сравнение численной ЭПР с аналитической кривой |
-| `em3d.vis` | `plot_rcs`, `plot_rcs_polar`, `plot_rcs_comparison`, `plot_rcs_comparison_polar`, `plot_field_slice`, `plot_field_volume` | Визуализация ЭПР и электромагнитного поля *(требует `pip install em3d[vis]`)* |
+| `em3d.vis` | `plot_rcs`, `plot_rcs_polar`, `plot_rcs_comparison`, `plot_rcs_comparison_polar`, `plot_gamma0_spectrum`, `plot_field_scalar_slice`, `plot_field_vector_slice`, `plot_field_scalar_volume`, `plot_field_vector_volume`, `plot_field_slice`, `plot_field_volume` | Визуализация ЭПР, спектра $\gamma_0$ и раздельных scalar/vector-графиков электромагнитного поля *(требует `pip install em3d[vis]`)* |
 
 ### Поля `SolverConfig`
 
@@ -375,6 +388,59 @@ eps_tensor = em3d.apply_refraction(grid, scalar_eta=scalar_eta)
 | `TwoStep` | ✗ | ✅ | Двухшаговый MSGD; эффективен для несамосопряжённых операторов |
 
 ---
+
+### Эксперименты главы 6
+
+Для диссертационных численных экспериментов добавлен CPU-first harness:
+
+- `experiments/chapter06_em.py` — совместимый фасад для notebook и локальных запусков;
+- `experiments/materials.py` — изотропные, анизотропные, поглощающие и Drude-плазменные материалы;
+- `experiments/cases.py` — сферы, эллипсоиды, одноосный кристалл и слоистый параллелепипед;
+- `experiments/scans.py` — `gamma0`, solver convergence, FFT-vs-dense и RCS scans;
+- `experiments/experiment_logging.py` — внешний лог экспериментов в `raw/*.jsonl` и `raw/*.log`;
+- `experiments/plots.py` — групповые графики срезов поля, FFT-vs-dense timing и RCS diagrams для notebook;
+- `src/em3d/experiments/structured_lattice.py` — пакетный эксперимент решётки неоднородных включений, три солвера, ЭПР, field plots и логи метрик;
+- `notebooks/chapter-06-em.ipynb` — narrative notebook по разделам 6.1–6.10.
+- `notebooks/structured-lattice-kaggle.ipynb` — отдельный Kaggle-блокнот, запускающий эксперимент через установленный пакет.
+
+В notebook раздел 6.6 сравнивает FFT-матвек с dense NumPy на `N=2..10`, раздел 6.8 строит нормированные диаграммы ЭПР для `k0a = [0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 6.0, 8.0, 10.0]` при `a=0.5`, а раздел 6.10 содержит выключенный по умолчанию `RUN_CRASH_TEST=False` блок для TwoStep на слоистой структуре `N=128`.
+
+Быстрый smoke-запуск:
+
+```powershell
+$env:PYTHONPATH=(Resolve-Path 'src').Path
+py -m experiments.chapter06_em --mode quick --output-root experiments/outputs/chapter06-smoke --max-iter 50 --rtol 1e-5
+```
+
+Установка с GitHub на удалённой машине:
+
+```bash
+pip install "em3d[vis] @ git+https://github.com/qwerty29544/em3d.git"
+```
+
+Рабочий запуск решётки структурированных включений через пакетный API:
+
+```python
+from em3d.experiments.structured_lattice import (
+    make_structured_lattice_case,
+    run_structured_lattice_experiment,
+)
+
+case = make_structured_lattice_case(
+    N=(100, 100, 100),
+    coarse_N=(9, 9, 9),
+    lattice_shape=(5, 5, 5),
+)
+
+summary = run_structured_lattice_experiment(
+    case=case,
+    output_root="experiments/outputs/structured-lattice-n100",
+    max_iter=500,
+    rtol=1e-6,
+    rcs_n_phi=120,
+)
+print(summary)
+```
 
 ## Математическое обоснование
 
@@ -397,9 +463,13 @@ $$B_{ij} = \begin{cases} \displaystyle\int_0^{r_0} e^{ik_0 r}\,r\,dr, & i = j \\
 
 ### БПФ-ускорение
 
-Матрица $\mathbf{B}$ тёплицева на периодической решётке. Вложение в удвоенную решётку $\Pi_2 = [0,\,2L]^3$ делает оператор циркулянтным; матвек становится:
+Матрица $\mathbf{B}$ является трёхуровневой блочно-тёплицевой: каждый блок — диадическая матрица 3×3. Вложение в удвоенную решётку $\Pi_2 = [0,\,2L]^3$ делает оператор блочно-циркулянтным; матвек становится:
 
-$$(\mathbf{B}\boldsymbol{\eta}\mathbf{u})_i = \mathrm{IFFT}\!\left[\,\hat{K} \odot \mathrm{FFT}(\text{zero-pad}(\boldsymbol{\eta}\mathbf{u}))\,\right]_{i},\quad i \leq N$$
+$$(\mathbf{B}\boldsymbol{\eta}\mathbf{u})_i =
+\mathrm{IFFT}\!\left[
+\sum_{j=1}^{3}\hat{K}_{ij}\,
+\mathrm{FFT}(\text{zero-pad}((\boldsymbol{\eta}\mathbf{u})_j))
+\right]_{i},\quad i=1,2,3.$$
 
 Стоимость: $\mathcal{O}(N\log N)$ против $\mathcal{O}(N^2)$ для плотной матрицы.
 
@@ -407,13 +477,15 @@ $$(\mathbf{B}\boldsymbol{\eta}\mathbf{u})_i = \mathrm{IFFT}\!\left[\,\hat{K} \od
 
 Итерация SIM:
 
-$$\mathbf{u}^{(k+1)} = \mathbf{u}^{(k)} - \gamma_0\!\left(\mathbf{A}\mathbf{u}^{(k)} - \mathbf{f}\right), \qquad \mathbf{A} = \mathbf{I} + \mathbf{B}\boldsymbol{\eta}$$
+$$\mathbf{u}^{(k+1)} = \mathbf{u}^{(k)} - \gamma_0\!\left(\mathbf{A}\mathbf{u}^{(k)} - \mathbf{f}\right), \qquad \mathbf{A} = \mathbf{I} - \mathbf{B}\boldsymbol{\eta}$$
 
-сходится при $\gamma_0 = 1/\mu$, где $\mu$ — центр **наименьшей описанной окружности** (МОО) выпуклой оболочки выборки спектра $\mathbf{B}\boldsymbol{\eta}$.
+сходится при $\gamma_0 = 1/\mu$, где $\mu$ — центр окружности, содержащей спектр исходного дискретного оператора $\mathbf{A}$ и не содержащей начало координат. На практике `em3d.gamma0.estimate_from_problem` строит грубую dense-матрицу $\mathbf{A}_{coarse}$, считает её собственные значения, строит выпуклую оболочку и выбирает окружность с минимальным отношением $R/|\mu|$.
+
+Спектр расширенного циркулянтного FFT-embedding-оператора для этой настройки не используется: он соответствует другому оператору и не совпадает со спектром конечной блочно-тёплицевой матрицы $\mathbf{A}$.
 
 Модуль `gamma0` реализует:
 1. Алгоритм Эндрю (монотонная цепь) для выпуклой оболочки точек $\{\lambda_k\} \subset \mathbb{C}$.
-2. Перебор пар и троек вершин для поиска МОО.
+2. Перебор пар и троек вершин для поиска допустимой окружности минимального угла видимости из начала координат.
 3. Проверку, что $0 \notin$ МОО (иначе $\gamma_0$ не определён).
 
 ### Двухшаговый метод (TwoStep)

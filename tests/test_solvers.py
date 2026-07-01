@@ -12,6 +12,41 @@ from em3d.solvers.bicgstab import BiCGStab
 from em3d.solvers.twostep import TwoStep
 
 
+class _MatrixOperator:
+    def __init__(self, A, backend):
+        self.A = np.asarray(A, dtype=np.complex128)
+        self.backend = backend
+
+    def matvec(self, u):
+        return self.backend.array(self.A @ np.asarray(u))
+
+    def rmatvec(self, u):
+        return self.backend.array(self.A.conj().T @ np.asarray(u))
+
+
+def _manual_twostep_two_updates(A, rhs):
+    u0 = np.zeros_like(rhs, dtype=np.complex128)
+    r0 = A @ u0 - rhs
+    g0 = A.conj().T @ r0
+    Hg0 = A @ g0
+    h0 = np.vdot(g0, g0).real / np.vdot(Hg0, Hg0).real
+    u1 = u0 - h0 * g0
+
+    r1 = A @ u1 - rhs
+    g1 = A.conj().T @ r1
+    Hg1 = A @ g1
+    delta_r = r1 - r0
+    a00 = np.vdot(delta_r, delta_r).real
+    a01 = np.vdot(delta_r, Hg1).real
+    a11 = np.vdot(Hg1, Hg1).real
+    b0 = np.vdot(r1, delta_r).real
+    b1 = np.vdot(r1, Hg1).real
+    det = a00 * a11 - a01 * a01
+    t = (b0 * a11 - b1 * a01) / det
+    h = (a00 * b1 - a01 * b0) / det
+    return u1 - t * (u1 - u0) - h * g1
+
+
 def test_solver_config_defaults():
     cfg = SolverConfig(max_iter=100, rtol=1e-6)
     assert cfg.max_iter == 100
@@ -79,6 +114,18 @@ def test_twostep_converges(backend_numpy_double):
     assert result.converged, f"TwoStep did not converge, residuals: {result.residual_history[-5:]}"
     err = np.linalg.norm(np.asarray(result.u) - np.asarray(u_true)) / np.linalg.norm(np.asarray(u_true))
     assert err < 1e-6
+
+
+def test_twostep_uses_two_step_recurrence(backend_numpy_double):
+    A = np.array([[2.0, 0.5], [1.0, 1.5]], dtype=np.complex128)
+    rhs = backend_numpy_double.array(np.array([1.0, -0.5], dtype=np.complex128))
+    op = _MatrixOperator(A, backend_numpy_double)
+
+    result = TwoStep(SolverConfig(max_iter=2, rtol=1e-15)).solve(op, rhs)
+
+    expected = _manual_twostep_two_updates(A, np.asarray(rhs))
+    assert np.allclose(np.asarray(result.u), expected, rtol=1e-12, atol=1e-12)
+    assert np.linalg.norm(A @ np.asarray(result.u) - np.asarray(rhs)) < 1e-12
 
 
 SOLVERS = [

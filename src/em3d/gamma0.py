@@ -1,18 +1,37 @@
-"""γ₀ algorithm: convex hull of spectrum samples and bounding circle for the optimal iteration parameter."""
+"""gamma0 geometry and coarse-spectrum analysis for SIM."""
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable
 
 import numpy as np
 
 
+@dataclass(frozen=True)
+class Gamma0Analysis:
+    """Complete gamma0 analysis result for research workflows."""
+
+    mu: complex
+    radius: float
+    rho: float
+    spectrum: np.ndarray
+    hull: np.ndarray
+    coarse_N: tuple[int, int, int] | None = None
+    matrix_shape: tuple[int, int] | None = None
+
+    def as_solver_config_kwargs(self) -> dict:
+        return {"mu": self.mu, "radius": self.radius}
+
+
 def cross(o, a, b) -> float:
-    """Signed area of the triangle (o, a, b) × 2. Positive for CCW."""
+    """Signed area of the triangle (o, a, b) x 2. Positive for CCW."""
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
 
 def sequential_chain(points: np.ndarray) -> np.ndarray:
-    """Andrew's monotone chain convex hull. Input: (N, 2). Output: (H, 2) CCW, no duplicates."""
+    """Andrew's monotone chain convex hull. Input: (N, 2). Output: (H, 2)."""
     pts = np.asarray(points, dtype=np.float64)
-    pts = np.unique(pts, axis=0)  # sorts lexicographically and deduplicates
+    pts = np.unique(pts, axis=0)
     if len(pts) < 2:
         return pts
 
@@ -32,11 +51,30 @@ def sequential_chain(points: np.ndarray) -> np.ndarray:
     return np.array(hull_points, dtype=np.float64)
 
 
+def mu_2points(z1: complex, z2: complex) -> complex:
+    """Step-A gamma0 centre for the circle through two spectrum points."""
+    prod = z1 * np.conj(z2)
+    denom = 2.0 * (abs(prod) + prod.real)
+    if abs(denom) < 1e-30:
+        raise ValueError("two-point gamma0 circle is undefined for this pair")
+    midpoint = 0.5 * (z1 + z2)
+    correction = 1j * (prod.imag * (z2 - z1)) / denom
+    return complex(midpoint + correction)
+
+
+def radius_2points(z1: complex, z2: complex) -> float:
+    """Step-A gamma0 radius for the circle through two spectrum points."""
+    prod = np.conj(z1) * z2
+    denom = 2.0 * (abs(prod) + prod.real)
+    if abs(denom) < 1e-30:
+        raise ValueError("two-point gamma0 circle is undefined for this pair")
+    value = (abs(z1 - z2) ** 2) * abs(prod) / denom
+    return float(np.sqrt(max(value.real, 0.0)))
+
+
 def compute_circle_two_points(z1: complex, z2: complex) -> tuple:
-    """Circle through two points with the smaller radius (midpoint, |z2-z1|/2)."""
-    centre = 0.5 * (z1 + z2)
-    radius = abs(z2 - z1) / 2.0
-    return centre, float(radius)
+    """Gamma0 Step-A circle for a boundary segment."""
+    return mu_2points(z1, z2), radius_2points(z1, z2)
 
 
 def compute_circle_three_points(z1: complex, z2: complex, z3: complex) -> tuple:
@@ -63,47 +101,156 @@ def circle_contains_origin(centre: complex, radius: float, epsilon: float = 1e-8
     return abs(centre) <= radius + epsilon
 
 
-def find_params(spectrum_samples: np.ndarray) -> dict:
-    """Compute the optimal γ₀ iteration parameter from spectrum samples.
+def _candidate_rho(centre: complex, radius: float) -> float:
+    centre_abs = abs(centre)
+    if centre_abs <= 1e-30:
+        return float("inf")
+    return float(radius / centre_abs)
 
-    Returns {'mu': complex, 'radius': float}. The return dict is plug-compatible
-    with SolverConfig(**find_params(samples)). Raises ValueError if samples are
-    degenerate (fewer than 2 points, origin inside the resulting circle).
-    """
-    pts = np.asarray(spectrum_samples, dtype=np.complex128)
-    if len(pts) < 2:
-        raise ValueError("find_params requires at least 2 spectrum samples")
 
-    # Convex hull of the point set in 2D real coordinates
-    as_xy = np.column_stack([pts.real, pts.imag])
+def _valid_candidate(centre: complex, radius: float, hull: np.ndarray) -> bool:
+    return circle_contains_points(centre, radius, hull) and not circle_contains_origin(centre, radius)
+
+
+def _iter_pairs(points: np.ndarray) -> Iterable[tuple[complex, complex]]:
+    for i in range(len(points)):
+        for j in range(i + 1, len(points)):
+            yield points[i], points[j]
+
+
+def _iter_triples(points: np.ndarray) -> Iterable[tuple[complex, complex, complex]]:
+    for i in range(len(points)):
+        for j in range(i + 1, len(points)):
+            for k in range(j + 1, len(points)):
+                yield points[i], points[j], points[k]
+
+
+def analyze_spectrum(
+    spectrum_samples: np.ndarray,
+    *,
+    coarse_N: tuple[int, int, int] | None = None,
+    matrix_shape: tuple[int, int] | None = None,
+) -> Gamma0Analysis:
+    """Compute gamma0 parameters and diagnostic geometry from spectrum samples."""
+    spectrum = np.asarray(spectrum_samples, dtype=np.complex128).reshape(-1)
+    if len(spectrum) < 2:
+        raise ValueError("analyze_spectrum requires at least 2 spectrum samples")
+
+    as_xy = np.column_stack([spectrum.real, spectrum.imag])
     hull_xy = sequential_chain(as_xy)
     hull = hull_xy[:, 0] + 1j * hull_xy[:, 1]
     if len(hull) < 2:
-        raise ValueError("spectrum samples are degenerate (collinear or identical)")
+        raise ValueError("spectrum samples are degenerate")
 
-    # Smallest enclosing circle among: (a) pairs of hull points (diameter), (b) triples.
-    best = None  # (radius, centre)
-    for i in range(len(hull)):
-        for j in range(i + 1, len(hull)):
-            c, r = compute_circle_two_points(hull[i], hull[j])
-            if circle_contains_points(c, r, hull):
-                if best is None or r < best[0]:
-                    best = (r, c)
-    for i in range(len(hull)):
-        for j in range(i + 1, len(hull)):
-            for k in range(j + 1, len(hull)):
-                try:
-                    c, r = compute_circle_three_points(hull[i], hull[j], hull[k])
-                except ValueError:
-                    continue
-                if circle_contains_points(c, r, hull):
-                    if best is None or r < best[0]:
-                        best = (r, c)
+    best: tuple[float, float, complex] | None = None
+
+    for z1, z2 in _iter_pairs(hull):
+        try:
+            centre, radius = compute_circle_two_points(z1, z2)
+        except ValueError:
+            continue
+        if _valid_candidate(centre, radius, hull):
+            rho = _candidate_rho(centre, radius)
+            if best is None or rho < best[0]:
+                best = (rho, radius, centre)
+
+    for z1, z2, z3 in _iter_triples(hull):
+        try:
+            centre, radius = compute_circle_three_points(z1, z2, z3)
+        except ValueError:
+            continue
+        if _valid_candidate(centre, radius, hull):
+            rho = _candidate_rho(centre, radius)
+            if best is None or rho < best[0]:
+                best = (rho, radius, centre)
+
     if best is None:
-        raise ValueError("could not find a bounding circle; check spectrum samples")
-    radius, mu = best
-    if circle_contains_origin(mu, radius):
-        raise ValueError(
-            "origin lies inside (or on) the bounding circle; γ₀ is ill-defined for this spectrum"
-        )
-    return {"mu": mu, "radius": float(radius)}
+        raise ValueError("could not find a gamma0 circle that excludes the origin")
+
+    rho, radius, mu = best
+    return Gamma0Analysis(
+        mu=mu,
+        radius=float(radius),
+        rho=float(rho),
+        spectrum=spectrum,
+        hull=hull,
+        coarse_N=coarse_N,
+        matrix_shape=matrix_shape,
+    )
+
+
+def find_params(spectrum_samples: np.ndarray) -> dict:
+    """Return {'mu': complex, 'radius': float} for SolverConfig compatibility."""
+    return analyze_spectrum(spectrum_samples).as_solver_config_kwargs()
+
+
+def _normalize_grid_shape(coarse_N) -> tuple[int, int, int]:
+    if isinstance(coarse_N, int):
+        shape = (coarse_N, coarse_N, coarse_N)
+    else:
+        shape = tuple(int(n) for n in coarse_N)
+    if len(shape) != 3 or any(n <= 0 for n in shape):
+        raise ValueError(f"coarse_N must be a positive int or 3-tuple, got {coarse_N!r}")
+    return shape
+
+
+def _nearest_indices(source_axis: np.ndarray, target_axis: np.ndarray) -> np.ndarray:
+    source = np.asarray(source_axis, dtype=np.float64)
+    target = np.asarray(target_axis, dtype=np.float64)
+    indices = np.searchsorted(source, target)
+    indices = np.clip(indices, 0, len(source) - 1)
+    left = np.clip(indices - 1, 0, len(source) - 1)
+    choose_left = np.abs(target - source[left]) <= np.abs(target - source[indices])
+    return np.where(choose_left, left, indices)
+
+
+def _resample_eps_tensor(problem, coarse_grid) -> np.ndarray:
+    be = problem.grid.backend
+    eps = np.asarray(be.to_host(problem.eps_tensor), dtype=np.complex128)
+    ix = _nearest_indices(be.to_host(problem.grid.x), coarse_grid.x)
+    iy = _nearest_indices(be.to_host(problem.grid.y), coarse_grid.y)
+    iz = _nearest_indices(be.to_host(problem.grid.z), coarse_grid.z)
+    return eps[:, :, ix, :, :][:, :, :, iy, :][:, :, :, :, iz]
+
+
+def _eps_block_matrix(eps_tensor: np.ndarray) -> np.ndarray:
+    Nx, Ny, Nz = eps_tensor.shape[2:]
+    n_cells = Nx * Ny * Nz
+    out = np.zeros((3 * n_cells, 3 * n_cells), dtype=np.complex128)
+    cell = 0
+    for ix in range(Nx):
+        for iy in range(Ny):
+            for iz in range(Nz):
+                out[3 * cell : 3 * cell + 3, 3 * cell : 3 * cell + 3] = eps_tensor[:, :, ix, iy, iz]
+                cell += 1
+    return out
+
+
+def coarse_operator_matrix(problem, coarse_N=(4, 4, 4)) -> np.ndarray:
+    """Build dense H = I - B eta for a nearest-neighbour coarse version of problem."""
+    from .backend import Backend
+    from .dense import B_operator_matrix
+    from .dtypes import Precision
+    from .grid import Grid
+
+    shape = _normalize_grid_shape(coarse_N)
+    coarse_backend = Backend.numpy(Precision.DOUBLE)
+    coarse_grid = Grid(N=shape, L=problem.grid.L, center=problem.grid.center, backend=coarse_backend)
+    eps_tensor = _resample_eps_tensor(problem, coarse_grid)
+    B = B_operator_matrix(coarse_grid, k=problem.k0, volume=problem.volume)
+    eta = _eps_block_matrix(eps_tensor)
+    dof = B.shape[0]
+    return np.eye(dof, dtype=np.complex128) - B @ eta
+
+
+def estimate_from_problem(problem, coarse_N=(4, 4, 4)) -> Gamma0Analysis:
+    """Estimate gamma0 from the dense spectrum of a coarse-grid problem."""
+    shape = _normalize_grid_shape(coarse_N)
+    H = coarse_operator_matrix(problem, coarse_N=shape)
+    spectrum = np.linalg.eigvals(H)
+    return analyze_spectrum(spectrum, coarse_N=shape, matrix_shape=H.shape)
+
+
+def find_params_from_problem(problem, coarse_N=(4, 4, 4)) -> dict:
+    """Return SolverConfig-compatible gamma0 parameters estimated from problem."""
+    return estimate_from_problem(problem, coarse_N=coarse_N).as_solver_config_kwargs()

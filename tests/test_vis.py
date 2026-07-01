@@ -9,13 +9,27 @@ from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
 from em3d.vis import (
+    plot_gamma0_spectrum,
+    plot_field_scalar_slice,
+    plot_field_scalar_volume,
     plot_field_slice,
+    plot_field_vector_slice,
+    plot_field_vector_volume,
     plot_field_volume,
     plot_rcs,
     plot_rcs_comparison,
     plot_rcs_comparison_polar,
     plot_rcs_polar,
 )
+
+
+@pytest.fixture(autouse=True)
+def _close_matplotlib_figures():
+    """Keep visualization tests isolated from pyplot's global figure registry."""
+    yield
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
 
 
 def _synthetic_data(n: int = 24):
@@ -106,6 +120,20 @@ def test_missing_matplotlib_raises(monkeypatch):
 
 # ── Field visualization helpers ───────────────────────────────────────────
 
+def test_plot_gamma0_spectrum_draws_spectrum_hull_and_circle():
+    """plot_gamma0_spectrum draws spectrum, convex hull, origin, centre, and circle."""
+    analysis = em3d.gamma0.analyze_spectrum(
+        np.array([2.0 + 0.0j, 3.0 + 1.0j, 4.0 + 0.0j, 3.0 + 0.25j])
+    )
+    fig, ax = plot_gamma0_spectrum(analysis)
+    assert isinstance(fig, Figure)
+    assert isinstance(ax, Axes)
+    assert len(ax.collections) >= 2
+    assert len(ax.lines) >= 1
+    assert len(ax.patches) == 1
+    assert ax.get_aspect() in ("equal", 1.0)
+
+
 def _field_data(nx=8, ny=8, nz=8, seed=0):
     """Return (3, nx, ny, nz) complex128 field with random values."""
     rng = np.random.default_rng(seed)
@@ -130,6 +158,45 @@ def test_plot_field_slice_returns_fig_ax():
     assert isinstance(fig, Figure)
     assert isinstance(ax, Axes)
     assert len(ax.collections) > 0, "Expected pcolormesh in ax.collections"
+
+
+def test_plot_field_scalar_slice_returns_heatmap_without_quiver():
+    """plot_field_scalar_slice draws scalar heatmap only."""
+    import matplotlib.quiver as mquiver
+    u = _field_data()
+    grid = _field_grid()
+    fig, ax = plot_field_scalar_slice(u, grid, plane="xy", part="abs")
+    assert isinstance(fig, Figure)
+    assert isinstance(ax, Axes)
+    quivers = [c for c in ax.collections if isinstance(c, mquiver.Quiver)]
+    assert len(quivers) == 0
+    assert len(ax.collections) >= 1
+    assert len(fig.axes) == 2, "Expected main axes plus colorbar axes"
+
+
+def test_plot_field_vector_slice_returns_quiver_without_scalar_background():
+    """plot_field_vector_slice draws quiver only, without scalar pcolormesh/colorbar."""
+    import matplotlib.quiver as mquiver
+    u = _field_data()
+    grid = _field_grid()
+    fig, ax = plot_field_vector_slice(u, grid, plane="xy", part="real", stride=2)
+    assert isinstance(fig, Figure)
+    assert isinstance(ax, Axes)
+    quivers = [c for c in ax.collections if isinstance(c, mquiver.Quiver)]
+    assert len(quivers) == 1
+    assert quivers[0].N == 4 * 4
+    assert len(fig.axes) == 1, "Vector-only slice should not create a colorbar"
+
+
+def test_plot_field_scalar_slice_component():
+    """component=0/1/2 selects a single scalar component."""
+    u = _field_data()
+    grid = _field_grid()
+    for component in [None, 0, 1, 2]:
+        fig, ax = plot_field_scalar_slice(u, grid, component=component)
+        assert isinstance(fig, Figure)
+    with pytest.raises(ValueError, match="component"):
+        plot_field_scalar_slice(u, grid, component=3)
 
 
 def test_plot_field_slice_all_planes():
@@ -210,6 +277,26 @@ def test_plot_field_volume_returns_fig_ax3d():
     fig, ax = plot_field_volume(u, grid, stride=2)
     assert isinstance(fig, Figure)
     assert ax.name == "3d"
+
+
+def test_plot_field_scalar_volume_returns_scatter3d():
+    """plot_field_scalar_volume draws scalar 3D scatter only."""
+    u = _field_data()
+    grid = _field_grid()
+    fig, ax = plot_field_scalar_volume(u, grid, stride=2)
+    assert isinstance(fig, Figure)
+    assert ax.name == "3d"
+    assert len(ax.collections) >= 1
+
+
+def test_plot_field_vector_volume_returns_quiver3d():
+    """plot_field_vector_volume draws 3D vector quiver."""
+    u = _field_data()
+    grid = _field_grid()
+    fig, ax = plot_field_vector_volume(u, grid, stride=2)
+    assert isinstance(fig, Figure)
+    assert ax.name == "3d"
+    assert len(ax.collections) >= 1
 
 
 def test_plot_field_volume_warns_large_grid():

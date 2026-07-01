@@ -7,9 +7,8 @@ from .grid import Grid
 def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
     """Sample the 3×3 kernel on the doubled grid Π₂ (2Nx × 2Ny × 2Nz cells).
 
-    The (a, b) block is an isotropic scalar kernel ⋅ δ_{ab} in this minimal version.
-    Anisotropic refinements can hook in here; they are not needed for the FFT-vs-dense
-    integration test because the dense matrix is assembled consistently.
+    The (a, b) block is the dyadic Green tensor used in the original EM3D notebook:
+    ``G(R) * [C1 alpha alpha^T + C2 I]`` with the singular self-term ``-I/3``.
     `volume` is accepted for API symmetry but unused; cell volume is taken from grid.dv.
     """
     be = grid.backend
@@ -23,25 +22,32 @@ def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
     sz = xp.concatenate([xp.arange(Nz) * dz, -(xp.arange(Nz, 0, -1)) * dz])
     SX, SY, SZ = xp.meshgrid(sx, sy, sz, indexing="ij")
     R = xp.sqrt(SX * SX + SY * SY + SZ * SZ)
-    # Excluded-sphere self-interaction at R=0: ∫₀^r₀ exp(ikr)·r dr
-    # No dv factor: the spherical integral absorbs the cell volume implicitly
-    # through r0 = (3·dv/4π)^{1/3}; matches b_coeff(x, x, k, dv) in kernel.py.
     dv = grid.dv
-    r0 = float((3.0 * dv / (4.0 * xp.pi)) ** (1.0 / 3.0))
-    if abs(k) > 1e-15:
-        G_self = xp.exp(be.complex_dtype(1j * k * r0)) * (r0 / be.complex_dtype(1j * k) - 1.0 / (k * k)) + 1.0 / (k * k)
-    else:
-        G_self = be.complex_dtype(r0 * r0 / 2.0)
-    # Off-diagonal: standard Green's function (avoid division by zero at R=0)
-    R_safe = xp.where(R < 1e-15, xp.ones_like(R), R)
-    G_off = xp.exp(be.complex_dtype(1j * k) * R_safe) / (4.0 * xp.pi * R_safe)
-    scalar = xp.where(R < 1e-15, G_self, (dv * G_off).astype(be.complex_dtype))
-    scalar = scalar.astype(be.complex_dtype, copy=False)
-    # isotropic 3×3 block: tensor[a, b] = δ_{ab} · scalar
-    shape = (3, 3) + scalar.shape
+    is_self = R < 1e-15
+    R_safe = xp.where(is_self, xp.ones_like(R), R)
+    inv_R = 1.0 / R_safe
+    inv_R2 = inv_R * inv_R
+    ik = be.complex_dtype(1j * k)
+    coef_1 = (3.0 * inv_R2) - (3.0 * ik * inv_R) - (k * k)
+    coef_2 = (k * k) + (ik * inv_R) - inv_R2
+    green = xp.exp(ik * R_safe) / (4.0 * xp.pi * R_safe)
+    alpha = (
+        SX / R_safe,
+        SY / R_safe,
+        SZ / R_safe,
+    )
+
+    shape = (3, 3) + R.shape
     out = be.zeros(shape, kind="complex")
-    for d in range(3):
-        out[d, d] = scalar
+    for a in range(3):
+        for b in range(3):
+            value = green * dv * coef_1 * alpha[a] * alpha[b]
+            if a == b:
+                value = value + green * dv * coef_2
+                value = xp.where(is_self, -1.0 / 3.0, value)
+            else:
+                value = xp.where(is_self, 0.0, value)
+            out[a, b] = value.astype(be.complex_dtype, copy=False)
     return out
 
 
@@ -111,7 +117,7 @@ class Operator:
         return self._be
 
     def matvec(self, u):
-        """y = (I + B·η) u.  Accepts (3, Nx, Ny, Nz), returns same shape."""
+        """y = (I - B·η) u.  Accepts (3, Nx, Ny, Nz), returns same shape."""
         be = self._be
         xp = be.xp
         eta = self.problem.eps_tensor
@@ -122,10 +128,10 @@ class Operator:
         applied_hat = _apply_block_kernel(xp, self._K_hat, hat)
         applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
         B_eta_u = _crop_from_doubled(applied_big, self._N)
-        return (u + B_eta_u).astype(be.complex_dtype, copy=False)
+        return (u - B_eta_u).astype(be.complex_dtype, copy=False)
 
     def rmatvec(self, u):
-        """y = (I + η* · B*) u  — adjoint in the same inner product as the notebook."""
+        """y = (I - η* · B*) u  — adjoint of ``matvec``."""
         be = self._be
         xp = be.xp
         eta = self.problem.eps_tensor
@@ -135,7 +141,7 @@ class Operator:
         applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
         B_star_u = _crop_from_doubled(applied_big, self._N)
         eta_star_B_star_u = xp.einsum("ab...,b...->a...", self._eta_conj_T, B_star_u)
-        return (u + eta_star_B_star_u).astype(be.complex_dtype, copy=False)
+        return (u - eta_star_B_star_u).astype(be.complex_dtype, copy=False)
 
     def to_dense(self):
         """Dense assembly; requires numpy backend."""

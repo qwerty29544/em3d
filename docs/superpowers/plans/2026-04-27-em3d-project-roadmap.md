@@ -17,16 +17,14 @@
 ### Что ограничивает дальнейшую реализацию
 
 1. **Mie пока не эталон.** Есть математические ошибки и слабые тесты.
-2. **Модель оператора упрощена.** В wiki зафиксировано, что полноценная электродинамическая ОСИУ использует тензор Грина `Gamma`, а текущий оператор использует скалярное ядро `G(R) * delta_ij`.
+2. **Модель оператора восстановлена до dyadic Green kernel.** После проверки raw notebook текущий оператор использует 3×3 ядро `G(R)[C1 alpha alpha^T + C2 I]` и self-term `-I/3`; прежняя формулировка про скалярное `G(R) * delta_ij` была ошибкой переноса.
 3. **Документация рассинхронизирована.** README, docs/specs и wiki расходятся по статусу `farfield`, `mie`, и смыслу `u`.
 4. **GPU-контракт неоднородный.** Ядро поддерживает CuPy, но часть post-processing helpers неаккуратно вызывает `np.asarray`.
 5. **Тесты проверяют в основном внутреннюю согласованность.** Нужны внешние/математические gates: Mie, boundary conditions, known limits.
 
 ### Целевая версия следующего этапа
 
-Следующий устойчивый milestone: **`em3d` как воспроизводимый CPU-first исследовательский пакет для скалярно-ядровой электродинамической VIE с проверенной ЭПР и Mie-ориентированным validation harness.**
-
-Полный dyadic Green tensor — следующий milestone, не смешивать с repair `mie`.
+Следующий устойчивый milestone: **`em3d` как воспроизводимый CPU-first исследовательский пакет для векторной электродинамической VIE с dyadic Green kernel, проверенной ЭПР и Mie-ориентированным validation harness.**
 
 ---
 
@@ -44,7 +42,7 @@ Deliverables:
 - [ ] `mie` near-field проходит center/no-scatterer/boundary sanity tests.
 - [ ] `farfield` использует safe backend conversion.
 - [ ] `vis` корректно обрабатывает zero RCS in dB mode.
-- [ ] README говорит, что `u` в `(I + B eta) u = f` — полное поле.
+- [ ] README говорит, что `u` в `(I - B eta) u = f` — полное поле.
 - [ ] Wiki обновлена или явно вынесена из текущего git state.
 
 Verification:
@@ -89,39 +87,23 @@ Acceptance:
 
 ---
 
-## Milestone 3: Full Electrodynamic Kernel Decision
+## Milestone 3: Dyadic Kernel Baseline
 
-**Goal:** decide whether to keep scalar kernel as MVP limitation or implement full dyadic Green tensor.
+**Goal:** keep the restored dyadic Green kernel covered by regression tests and use it as the baseline for subsequent validation experiments.
 
-Brainstorm options:
+Status after repair:
 
-1. **Keep scalar kernel.**
-   - Pros: current implementation remains simple and tested.
-   - Cons: limited physical fidelity for full EM scattering, especially anisotropic cases.
+- `kernel.b_coeff` returns a full 3×3 dyadic block.
+- FFT kernel stores all 9 block components on the doubled grid.
+- `Operator.matvec` uses `I - B eta`, matching the raw notebook.
+- `Operator.rmatvec` is checked against the dense adjoint.
+- `gamma0.coarse_operator_matrix` analyzes `H = I - B_dense @ Eta_dense`.
 
-2. **Implement full dyadic tensor kernel.**
-   - Pros: matches wiki/literature formulation of ОСИУ and improves physical correctness.
-   - Cons: larger refactor; self-term and singular integral treatment become more delicate.
+Remaining validation questions:
 
-Recommendation:
-
-- Do not start dyadic kernel until Mie baseline is fixed.
-- After baseline, create a dedicated spec:
-  - `docs/superpowers/specs/YYYY-MM-DD-em3d-dyadic-green-design.md`
-  - `docs/superpowers/plans/YYYY-MM-DD-em3d-dyadic-green.md`
-
-Minimum design questions:
-
-- Exact discrete self-term for dyadic `Gamma`.
-- Shape and storage of 3x3 kernel blocks on doubled grid.
-- Compatibility with anisotropic `eta`.
-- Dense reference implementation for tiny grids.
-- Adjoint correctness for `rmatvec`.
-
-Acceptance for dyadic milestone:
-
-- FFT matvec equals dense dyadic reference on `N=3^3` or `N=4^3`.
-- Mie RCS agreement improves or is at least physically interpretable.
+- Effective-radius and voxelization effects in Mie absolute RCS.
+- Boundary-condition quality of the analytical near-field reference.
+- Stronger anisotropic cases with off-diagonal material tensors.
 
 ---
 
@@ -159,7 +141,7 @@ Tasks:
 - [ ] If wiki is part of project state, commit its ingest pages and update parent gitlink.
 - [ ] Update `code/em3d.md` after each completed feature milestone.
 - [ ] Add "Known limitations" to README:
-  - scalar Green kernel;
+  - voxelized sphere/effective-radius limits for absolute Mie RCS;
   - Mie large `x > 10`;
   - optional GPU support boundaries;
   - plotting CPU transfer behavior.
@@ -202,8 +184,8 @@ Acceptance:
 1. Run `2026-04-27-em3d-correctness-repair.md`.
 2. Add validation harness.
 3. Update docs/wiki to match actual code state.
-4. Decide scalar vs dyadic kernel milestone.
+4. Validate dyadic-kernel Mie scale and anisotropic cases.
 5. Improve solver robustness.
 6. Add examples and benchmarks.
 
-Do not start full dyadic kernel or solver refactors before the Mie correctness baseline is stable. Otherwise validation target and numerical operator change at the same time, making failures hard to attribute.
+Do not mix further solver refactors with Mie validation unless the failing metric is already isolated. Otherwise validation target and numerical method change at the same time, making failures hard to attribute.

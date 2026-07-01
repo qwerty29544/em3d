@@ -34,6 +34,6 @@ class SolverResult:
 
 
 class BaseSolver(Protocol):
-    """Iterative solver for problem (I + B·η) u = rhs."""
+    """Iterative solver for problem (I - B·η) u = rhs."""
 
     def solve(self, operator, rhs) -> SolverResult: ...

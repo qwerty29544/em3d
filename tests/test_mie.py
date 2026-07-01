@@ -109,7 +109,8 @@ def test_mie_verification_rcs_normalized_shape(eps_r, k0a, backend_numpy_double)
     """em3d far-field angular pattern must match Mie after normalization.
 
     The absolute RCS scale is kept as a loose diagnostic because the current
-    solver still uses the scalar Green kernel and a voxelized sphere.
+    solver uses a voxelized sphere and the discrete self-term/effective radius
+    still need a dedicated validation pass.
     """
     a = 0.3
     k0 = k0a / a

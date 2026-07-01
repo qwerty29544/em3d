@@ -6,7 +6,7 @@ from em3d.operator import prep_coeffs_em3d
 from em3d.refraction import cylinder_refraction
 from em3d.wave import flat_wave_vec
 from em3d.problem import Problem
-from em3d.operator import Operator
+from em3d.operator import Operator, _kernel_tensor_on_doubled_grid
 
 
 def test_prep_coeffs_shape_and_dtype(backend_numpy_double):
@@ -15,6 +15,14 @@ def test_prep_coeffs_shape_and_dtype(backend_numpy_double):
     # Π₂ doubling: FFT tensor on (2Nx, 2Ny, 2Nz) with 3×3 block structure
     assert coeffs.shape == (3, 3) + tuple(2 * n for n in grid.N)
     assert coeffs.dtype == backend_numpy_double.complex_dtype
+
+
+def test_kernel_tensor_contains_dyadic_off_diagonal_blocks(backend_numpy_double):
+    """A generic spatial offset must produce non-zero off-diagonal dyadic kernel entries."""
+    grid = Grid(N=(4, 4, 4), L=(1.0, 1.0, 1.0), center=(0.0, 0.0, 0.0), backend=backend_numpy_double)
+    K = _kernel_tensor_on_doubled_grid(grid, k=1.0, volume=grid.dv * 64)
+    assert abs(K[0, 1, 1, 1, 0]) > 0.0
+    np.testing.assert_allclose(K[:, :, 0, 0, 0], (-1.0 / 3.0) * np.eye(3), atol=1e-14)
 
 
 def _toy_problem(backend, N=(4, 4, 4)):
@@ -76,10 +84,10 @@ def test_fft_matvec_matches_dense(backend_numpy_double):
     M_dense = op.to_dense()
     rng = np.random.default_rng(42)
     u = (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128)
-    # FFT path: applies (I + B·η); dense path: applies (I + dense·η)
+    # FFT path applies (I - B·η); dense path applies the same operator.
     eta_flat = _flatten_field(np.einsum("ab...,b...->a...", problem.eps_tensor, u))
     u_flat = _flatten_field(u)
-    y_dense = u_flat + M_dense @ eta_flat
+    y_dense = u_flat - M_dense @ eta_flat
     y_fft = _flatten_field(op.matvec(u))
     rel = np.linalg.norm(y_fft - y_dense) / np.linalg.norm(y_dense)
     assert rel < 1e-10, f"FFT vs dense relative error {rel:.2e}"
@@ -102,7 +110,7 @@ def test_fft_rmatvec_matches_dense_adjoint(backend_numpy_double):
     u = (rng.standard_normal((3,) + problem.grid.N) + 1j * rng.standard_normal((3,) + problem.grid.N)).astype(np.complex128)
     u_flat = _flatten_field(u)
     eta_conj_T = np.einsum("ab...,b...->a...", np.conj(problem.eps_tensor).swapaxes(0, 1), _unflatten_field(M_dense.conj().T @ u_flat, problem.grid.N))
-    expected = u_flat + _flatten_field(eta_conj_T)
+    expected = u_flat - _flatten_field(eta_conj_T)
     y_fft = _flatten_field(op.rmatvec(u))
     rel = np.linalg.norm(y_fft - expected) / np.linalg.norm(expected)
     assert rel < 1e-10

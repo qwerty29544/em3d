@@ -23,6 +23,7 @@ from . import gamma0
 from . import farfield
 from . import vis
 from . import mie
+from . import acoustics
 from .solvers import BaseSolver, BiCGStab, SIM, SolverConfig, SolverResult, TwoStep
 
 __version__ = "0.2.0"
@@ -42,6 +43,7 @@ __all__ = [
     "farfield",
     "vis",
     "mie",
+    "acoustics",
     "BaseSolver",
     "BiCGStab",
     "SIM",

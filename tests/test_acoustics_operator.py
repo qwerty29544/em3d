@@ -1,7 +1,7 @@
 import numpy as np
 
 import em3d
-from em3d.acoustics import eta_homogeneous, make_acoustic_problem
+from em3d.acoustics import AcousticOperator, eta_homogeneous, eta_sphere, make_acoustic_problem
 from em3d.acoustics.dense import (
     B_scalar_matrix,
     H_scalar_matrix,
@@ -55,3 +55,52 @@ def test_acoustic_dense_matrix_has_nonzero_scattering_for_eta_not_one():
     H = H_scalar_matrix(problem)
     assert B.shape == H.shape
     assert not np.allclose(H, np.eye(H.shape[0]))
+
+
+def test_acoustic_fft_operator_matches_dense_matvec():
+    grid = _grid((3, 3, 2))
+    eta = eta_sphere(
+        grid,
+        center=(0.0, 0.0, 0.0),
+        radius=0.45,
+        eta_inside=2.0 + 0.2j,
+        eta_outside=1.0,
+    )
+    problem = make_acoustic_problem(grid, eta, k0=1.2)
+    operator = AcousticOperator(problem)
+    rng = np.random.default_rng(123)
+    u = rng.normal(size=grid.N) + 1j * rng.normal(size=grid.N)
+    u = u.astype(np.complex128)
+
+    y_fft = np.asarray(operator.matvec(u))
+    H = H_scalar_matrix(problem)
+    y_dense = H @ u.reshape(-1)
+    assert np.allclose(y_fft.reshape(-1), y_dense, rtol=1e-12, atol=1e-12)
+
+
+def test_acoustic_fft_operator_is_identity_for_eta_one():
+    grid = _grid((3, 2, 2))
+    problem = make_acoustic_problem(grid, eta_homogeneous(grid, 1.0), k0=1.0)
+    operator = AcousticOperator(problem)
+    u = np.ones(grid.N, dtype=np.complex128) * (2.0 - 0.5j)
+    assert np.allclose(operator.matvec(u), u)
+    assert np.allclose(operator.rmatvec(u), u)
+
+
+def test_acoustic_rmatvec_is_adjoint():
+    grid = _grid((3, 3, 2))
+    eta = eta_sphere(
+        grid,
+        center=(0.0, 0.0, 0.0),
+        radius=0.45,
+        eta_inside=2.0 + 0.2j,
+        eta_outside=1.0,
+    )
+    problem = make_acoustic_problem(grid, eta, k0=1.2)
+    operator = AcousticOperator(problem)
+    rng = np.random.default_rng(456)
+    u = (rng.normal(size=grid.N) + 1j * rng.normal(size=grid.N)).astype(np.complex128)
+    v = (rng.normal(size=grid.N) + 1j * rng.normal(size=grid.N)).astype(np.complex128)
+    left = np.vdot(operator.matvec(u), v)
+    right = np.vdot(u, operator.rmatvec(v))
+    assert np.allclose(left, right, rtol=1e-12, atol=1e-12)

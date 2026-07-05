@@ -442,6 +442,35 @@ summary = run_structured_lattice_experiment(
 print(summary)
 ```
 
+### Acoustic Scalar Scattering
+
+```python
+from em3d.experiments.acoustic_scattering import (
+    make_sphere_case,
+    run_acoustic_experiment,
+)
+
+case = make_sphere_case(
+    N=64,
+    coarse_N=6,
+    radius=0.25,
+    eta_inside=2.0 + 0.25j,
+    eta_background=1.0,
+    k0=5.0,
+    solver_names=("SIM", "BiCGStab", "TwoStep"),
+)
+
+summary = run_acoustic_experiment(
+    case=case,
+    output_root="experiments/outputs/acoustic-scattering",
+    max_iter=500,
+    rtol=1e-6,
+)
+print(summary["reference_solver"], summary["pattern"]["max"])
+```
+
+The acoustic API accepts `eta` as the material parameter and internally solves with `chi = eta - 1`, so `eta = 1` is the non-scattering background.
+
 ## Математическое обоснование
 
 ### Дискретизация

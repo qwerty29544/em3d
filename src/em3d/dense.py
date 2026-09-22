@@ -1,7 +1,3 @@
-"""Reference dense assembly of the volume-integral operator.
-
-Only used for integration testing on small grids. Always numpy.
-"""
 from __future__ import annotations
 
 import numpy as np
@@ -10,38 +6,73 @@ from .grid import Grid
 from .kernel import b_coeff
 
 
-def flatten_block_matrix(T4: np.ndarray) -> np.ndarray:
-    """Unpack a (N, N, m, m) block tensor into a (N·m, N·m) matrix (row-major blocks)."""
-    N, N2, m, m2 = T4.shape
-    if N != N2 or m != m2:
-        raise ValueError(f"expected (N,N,m,m) tensor, got {T4.shape}")
-    # reshape: (N, N, m, m) -> (N, m, N, m) -> (Nm, Nm)
-    return T4.transpose(0, 2, 1, 3).reshape(N * m, N * m)
+def flatten_block_matrix(tensor: np.ndarray) -> np.ndarray:
+    rows, columns, block_rows, block_columns = tensor.shape
+    if rows != columns or block_rows != block_columns:
+        raise ValueError(f"expected (N, N, m, m) tensor, got {tensor.shape}")
+    return tensor.transpose(0, 2, 1, 3).reshape(
+        rows * block_rows, columns * block_columns
+    )
 
 
 def _cell_centres(grid: Grid) -> np.ndarray:
-    """Return array of shape (Nx·Ny·Nz, 3) with cell-centre coordinates in row-major order."""
-    be = grid.backend
-    x = np.asarray(be.to_host(grid.x))
-    y = np.asarray(be.to_host(grid.y))
-    z = np.asarray(be.to_host(grid.z))
+    backend = grid.backend
+    x = np.asarray(backend.to_host(grid.x))
+    y = np.asarray(backend.to_host(grid.y))
+    z = np.asarray(backend.to_host(grid.z))
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     return np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
 
 
-def B_operator_matrix(grid: Grid, *, k: float, volume: float) -> np.ndarray:
-    """Assemble the dense 3Ncells × 3Ncells matrix of the volume-integral operator.
-
-    Uses the dyadic 3×3 ``b_coeff`` block from the original notebook
-    ``B_operator_matrix`` without ε multiplication.
-    `volume` is accepted for API symmetry with the FFT operator but is unused here;
-    cell volume is always taken from grid.dv.
-    """
+def dense_kernel_matrix(grid: Grid, *, k: float) -> np.ndarray:
     centres = _cell_centres(grid)
-    Ncells = centres.shape[0]
-    dv = grid.dv
-    M = np.zeros((3 * Ncells, 3 * Ncells), dtype=np.complex128)
-    for i in range(Ncells):
-        for j in range(Ncells):
-            M[3 * i : 3 * i + 3, 3 * j : 3 * j + 3] = b_coeff(centres[i], centres[j], k=k, dv=dv)
-    return M
+    cells = centres.shape[0]
+    matrix = np.zeros((3 * cells, 3 * cells), dtype=np.complex128)
+    for row in range(cells):
+        for column in range(cells):
+            matrix[
+                3 * row : 3 * row + 3,
+                3 * column : 3 * column + 3,
+            ] = b_coeff(
+                centres[row], centres[column], k=k, dv=grid.dv
+            )
+    return matrix
+
+
+def B_operator_matrix(
+    grid: Grid,
+    *,
+    k: float,
+    volume: float | None = None,
+) -> np.ndarray:
+    """Backward-compatible name for :func:`dense_kernel_matrix`."""
+
+    return dense_kernel_matrix(grid, k=k)
+
+
+def contrast_block_matrix(contrast_tensor, *, backend=None) -> np.ndarray:
+    if backend is not None:
+        contrast = np.asarray(backend.to_host(contrast_tensor), dtype=np.complex128)
+    else:
+        contrast = np.asarray(contrast_tensor, dtype=np.complex128)
+    if contrast.ndim != 5 or contrast.shape[:2] != (3, 3):
+        raise ValueError(
+            "contrast_tensor must have shape (3, 3, Nx, Ny, Nz), "
+            f"got {contrast.shape}"
+        )
+    cells = int(np.prod(contrast.shape[2:]))
+    blocks = contrast.transpose(2, 3, 4, 0, 1).reshape(cells, 3, 3)
+    matrix = np.zeros((3 * cells, 3 * cells), dtype=np.complex128)
+    for cell, block in enumerate(blocks):
+        matrix[3 * cell : 3 * cell + 3, 3 * cell : 3 * cell + 3] = block
+    return matrix
+
+
+def dense_operator_matrix(problem) -> np.ndarray:
+    """Build the complete collocation matrix ``A = I - B chi``."""
+
+    kernel = dense_kernel_matrix(problem.grid, k=problem.k0)
+    contrast = contrast_block_matrix(
+        problem.eps_tensor, backend=problem.grid.backend
+    )
+    return np.eye(kernel.shape[0], dtype=np.complex128) - kernel @ contrast

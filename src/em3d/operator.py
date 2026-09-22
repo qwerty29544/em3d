@@ -1,28 +1,37 @@
-"""FFT-accelerated volume-integral operator on a doubled parallelepiped Π₂."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from math import prod
+
+import numpy as np
+
 from .grid import Grid
+from .layout import flatten_field, unflatten_field
 
 
-def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
-    """Sample the 3×3 kernel on the doubled grid Π₂ (2Nx × 2Ny × 2Nz cells).
+def _kernel_tensor_on_doubled_grid(
+    grid: Grid,
+    k: float,
+    volume: float | None = None,
+):
+    """Build the block-circulant embedding of the dyadic kernel.
 
-    The (a, b) block is the dyadic Green tensor used in the original EM3D notebook:
-    ``G(R) * [C1 alpha alpha^T + C2 I]`` with the singular self-term ``-I/3``.
-    `volume` is accepted for API symmetry but unused; cell volume is taken from grid.dv.
+    ``volume`` is retained for backward compatibility.  The discretization
+    weight is the cell volume ``grid.dv``; the total domain volume does not
+    enter the kernel formula.
     """
+
     be = grid.backend
     xp = be.xp
     Nx, Ny, Nz = grid.N
     Lx, Ly, Lz = grid.L
     dx, dy, dz = Lx / Nx, Ly / Ny, Lz / Nz
-    # separations on Π₂: [0, dx, 2dx, ..., (N-1)dx, -N·dx, -(N-1)dx, ..., -dx]  — typical periodisation
+
     sx = xp.concatenate([xp.arange(Nx) * dx, -(xp.arange(Nx, 0, -1)) * dx])
     sy = xp.concatenate([xp.arange(Ny) * dy, -(xp.arange(Ny, 0, -1)) * dy])
     sz = xp.concatenate([xp.arange(Nz) * dz, -(xp.arange(Nz, 0, -1)) * dz])
     SX, SY, SZ = xp.meshgrid(sx, sy, sz, indexing="ij")
     R = xp.sqrt(SX * SX + SY * SY + SZ * SZ)
-    dv = grid.dv
     is_self = R < 1e-15
     R_safe = xp.where(is_self, xp.ones_like(R), R)
     inv_R = 1.0 / R_safe
@@ -31,83 +40,139 @@ def _kernel_tensor_on_doubled_grid(grid: Grid, k: float, volume: float):
     coef_1 = (3.0 * inv_R2) - (3.0 * ik * inv_R) - (k * k)
     coef_2 = (k * k) + (ik * inv_R) - inv_R2
     green = xp.exp(ik * R_safe) / (4.0 * xp.pi * R_safe)
-    alpha = (
-        SX / R_safe,
-        SY / R_safe,
-        SZ / R_safe,
-    )
+    alpha = (SX / R_safe, SY / R_safe, SZ / R_safe)
 
     shape = (3, 3) + R.shape
-    out = be.zeros(shape, kind="complex")
-    for a in range(3):
-        for b in range(3):
-            value = green * dv * coef_1 * alpha[a] * alpha[b]
-            if a == b:
-                value = value + green * dv * coef_2
+    result = be.zeros(shape, kind="complex")
+    for row in range(3):
+        for column in range(3):
+            value = (
+                green
+                * grid.dv
+                * coef_1
+                * alpha[row]
+                * alpha[column]
+            )
+            if row == column:
+                value = value + green * grid.dv * coef_2
                 value = xp.where(is_self, -1.0 / 3.0, value)
             else:
                 value = xp.where(is_self, 0.0, value)
-            out[a, b] = value.astype(be.complex_dtype, copy=False)
-    return out
+            result[row, column] = value.astype(be.complex_dtype, copy=False)
+    return result
 
 
-def prep_coeffs_em3d(grid: Grid, *, k: float, volume: float):
-    """Return the precomputed FFT-of-kernel tensor on the doubled grid Π₂."""
-    be = grid.backend
-    kernel_tensor = _kernel_tensor_on_doubled_grid(grid, k=k, volume=volume)
-    return be.fftn(kernel_tensor, axes=(-3, -2, -1)).astype(be.complex_dtype, copy=False)
+@dataclass(frozen=True)
+class PreparedEMKernel:
+    """Reusable FFT representation of the electrodynamic convolution kernel."""
+
+    grid_shape: tuple[int, int, int]
+    grid_lengths: tuple[float, float, float]
+    wave_number: float
+    device: str
+    precision: str
+    kernel_hat: object
+    kernel_hat_adjoint: object
+
+    @classmethod
+    def build(cls, grid: Grid, *, k: float) -> "PreparedEMKernel":
+        tensor = _kernel_tensor_on_doubled_grid(grid, k=k)
+        be = grid.backend
+        kernel_hat = be.fftn(tensor, axes=(-3, -2, -1)).astype(
+            be.complex_dtype, copy=False
+        )
+        kernel_hat_adjoint = be.fftn(
+            be.xp.conj(tensor), axes=(-3, -2, -1)
+        ).astype(be.complex_dtype, copy=False)
+        return cls(
+            grid_shape=tuple(int(value) for value in grid.N),
+            grid_lengths=tuple(float(value) for value in grid.L),
+            wave_number=float(k),
+            device=str(be.device),
+            precision=str(be.precision.value),
+            kernel_hat=kernel_hat,
+            kernel_hat_adjoint=kernel_hat_adjoint,
+        )
+
+    def validate(self, grid: Grid, *, k: float) -> None:
+        errors: list[str] = []
+        if tuple(grid.N) != self.grid_shape:
+            errors.append(f"grid shape {grid.N!r} != {self.grid_shape!r}")
+        if not np.allclose(grid.L, self.grid_lengths, rtol=0.0, atol=0.0):
+            errors.append(f"grid lengths {grid.L!r} != {self.grid_lengths!r}")
+        if not np.isclose(float(k), self.wave_number, rtol=1e-14, atol=1e-14):
+            errors.append(f"wave number {k!r} != {self.wave_number!r}")
+        if grid.backend.device != self.device:
+            errors.append(f"device {grid.backend.device!r} != {self.device!r}")
+        if grid.backend.precision.value != self.precision:
+            errors.append(
+                f"precision {grid.backend.precision.value!r} != {self.precision!r}"
+            )
+        if errors:
+            raise ValueError("incompatible PreparedEMKernel: " + "; ".join(errors))
 
 
-def prep_conj_coeffs_em3d(grid: Grid, *, k: float, volume: float):
-    """FFT of the conjugate-kernel tensor for rmatvec."""
-    be = grid.backend
-    kernel_tensor = _kernel_tensor_on_doubled_grid(grid, k=k, volume=volume)
-    conj = be.xp.conj(kernel_tensor)
-    return be.fftn(conj, axes=(-3, -2, -1)).astype(be.complex_dtype, copy=False)
+def prep_coeffs_em3d(
+    grid: Grid,
+    *,
+    k: float,
+    volume: float | None = None,
+):
+    return PreparedEMKernel.build(grid, k=k).kernel_hat
+
+
+def prep_conj_coeffs_em3d(
+    grid: Grid,
+    *,
+    k: float,
+    volume: float | None = None,
+):
+    return PreparedEMKernel.build(grid, k=k).kernel_hat_adjoint
 
 
 from .problem import Problem
 
 
-def _pad_to_doubled(xp, u, N):
-    """Zero-pad a (3, Nx, Ny, Nz) field to (3, 2Nx, 2Ny, 2Nz)."""
-    Nx, Ny, Nz = N
-    shape = (3, 2 * Nx, 2 * Ny, 2 * Nz)
-    out = xp.zeros(shape, dtype=u.dtype)
-    out[:, :Nx, :Ny, :Nz] = u
-    return out
+def _pad_to_doubled(xp, field, shape):
+    Nx, Ny, Nz = shape
+    result = xp.zeros((3, 2 * Nx, 2 * Ny, 2 * Nz), dtype=field.dtype)
+    result[:, :Nx, :Ny, :Nz] = field
+    return result
 
 
-def _crop_from_doubled(u_big, N):
-    """Extract (3, Nx, Ny, Nz) from (3, 2Nx, 2Ny, 2Nz)."""
-    Nx, Ny, Nz = N
-    return u_big[:, :Nx, :Ny, :Nz]
+def _crop_from_doubled(field, shape):
+    Nx, Ny, Nz = shape
+    return field[:, :Nx, :Ny, :Nz]
 
 
-def _apply_block_kernel(xp, K_hat, u_hat):
-    """Apply the (3, 3) block kernel in Fourier space: out[a] = Σ_b K_hat[a,b] * u_hat[b]."""
-    out = xp.zeros_like(u_hat)
-    for a in range(3):
-        acc = None
-        for b in range(3):
-            term = K_hat[a, b] * u_hat[b]
-            acc = term if acc is None else acc + term
-        out[a] = acc
-    return out
+def _apply_block_kernel(xp, kernel_hat, field_hat):
+    result = xp.zeros_like(field_hat)
+    for row in range(3):
+        accumulator = None
+        for column in range(3):
+            term = kernel_hat[row, column] * field_hat[column]
+            accumulator = term if accumulator is None else accumulator + term
+        result[row] = accumulator
+    return result
 
 
 class Operator:
-    """FFT-backed volume integral operator with matvec and rmatvec.
-
-    Caches the precomputed kernel FFTs in the constructor.
-    """
-
-    def __init__(self, problem: Problem):
+    def __init__(
+        self,
+        problem: Problem,
+        *,
+        prepared_kernel: PreparedEMKernel | None = None,
+    ):
         self.problem = problem
         grid = problem.grid
         be = grid.backend
-        self._K_hat = prep_coeffs_em3d(grid, k=problem.k0, volume=problem.volume)
-        self._K_hat_conj = prep_conj_coeffs_em3d(grid, k=problem.k0, volume=problem.volume)
+        if prepared_kernel is None:
+            prepared_kernel = PreparedEMKernel.build(grid, k=problem.k0)
+        else:
+            prepared_kernel.validate(grid, k=problem.k0)
+        self._prepared_kernel = prepared_kernel
+        self._K_hat = prepared_kernel.kernel_hat
+        self._K_hat_conj = prepared_kernel.kernel_hat_adjoint
         self._eta_conj_T = be.xp.conj(problem.eps_tensor).swapaxes(0, 1)
         self._be = be
         self._N = grid.N
@@ -116,37 +181,72 @@ class Operator:
     def backend(self):
         return self._be
 
-    def matvec(self, u):
-        """y = (I - B·η) u.  Accepts (3, Nx, Ny, Nz), returns same shape."""
+    @property
+    def shape(self) -> tuple[int, int]:
+        dimension = 3 * prod(self._N)
+        return dimension, dimension
+
+    @property
+    def prepared_kernel(self) -> PreparedEMKernel:
+        return self._prepared_kernel
+
+    def matvec(self, field):
         be = self._be
         xp = be.xp
-        eta = self.problem.eps_tensor
-        # apply η (3×3 tensor contraction on each cell)
-        eta_u = xp.einsum("ab...,b...->a...", eta, u)
-        padded = _pad_to_doubled(xp, eta_u, self._N)
-        hat = be.fftn(padded, axes=(-3, -2, -1))
-        applied_hat = _apply_block_kernel(xp, self._K_hat, hat)
+        contrast = self.problem.eps_tensor
+        contrast_field = xp.einsum("ab...,b...->a...", contrast, field)
+        padded = _pad_to_doubled(xp, contrast_field, self._N)
+        transformed = be.fftn(padded, axes=(-3, -2, -1))
+        applied_hat = _apply_block_kernel(xp, self._K_hat, transformed)
         applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
-        B_eta_u = _crop_from_doubled(applied_big, self._N)
-        return (u - B_eta_u).astype(be.complex_dtype, copy=False)
+        integral_term = _crop_from_doubled(applied_big, self._N)
+        return (field - integral_term).astype(be.complex_dtype, copy=False)
 
-    def rmatvec(self, u):
-        """y = (I - η* · B*) u  — adjoint of ``matvec``."""
+    def rmatvec(self, field):
         be = self._be
         xp = be.xp
-        eta = self.problem.eps_tensor
-        padded = _pad_to_doubled(xp, u, self._N)
-        hat = be.fftn(padded, axes=(-3, -2, -1))
-        applied_hat = _apply_block_kernel(xp, self._K_hat_conj, hat)
+        padded = _pad_to_doubled(xp, field, self._N)
+        transformed = be.fftn(padded, axes=(-3, -2, -1))
+        applied_hat = _apply_block_kernel(xp, self._K_hat_conj, transformed)
         applied_big = be.ifftn(applied_hat, axes=(-3, -2, -1))
-        B_star_u = _crop_from_doubled(applied_big, self._N)
-        eta_star_B_star_u = xp.einsum("ab...,b...->a...", self._eta_conj_T, B_star_u)
-        return (u - eta_star_B_star_u).astype(be.complex_dtype, copy=False)
+        kernel_adjoint_field = _crop_from_doubled(applied_big, self._N)
+        contrast_adjoint_field = xp.einsum(
+            "ab...,b...->a...", self._eta_conj_T, kernel_adjoint_field
+        )
+        return (field - contrast_adjoint_field).astype(
+            be.complex_dtype, copy=False
+        )
 
-    def to_dense(self):
-        """Dense assembly; requires numpy backend."""
-        import numpy as _np
-        if self._be.xp is not _np:
-            raise RuntimeError("Operator.to_dense requires numpy backend")
-        from .dense import B_operator_matrix
-        return B_operator_matrix(self.problem.grid, k=self.problem.k0, volume=self.problem.volume)
+    def matvec_flat(self, vector):
+        return flatten_field(self.matvec(unflatten_field(vector, self._N)))
+
+    def rmatvec_flat(self, vector):
+        return flatten_field(self.rmatvec(unflatten_field(vector, self._N)))
+
+    def iteration_matvec_flat(self, vector, *, mu: complex):
+        if abs(mu) == 0.0:
+            raise ValueError("mu must be non-zero")
+        return vector - self.matvec_flat(vector) / self._be.complex_dtype(mu)
+
+    def to_dense_kernel(self) -> np.ndarray:
+        if self._be.device != "cpu":
+            raise RuntimeError("dense matrix construction requires a NumPy backend")
+        from .dense import dense_kernel_matrix
+
+        return dense_kernel_matrix(self.problem.grid, k=self.problem.k0)
+
+    def to_dense_operator(self) -> np.ndarray:
+        if self._be.device != "cpu":
+            raise RuntimeError("dense matrix construction requires a NumPy backend")
+        from .dense import dense_operator_matrix
+
+        return dense_operator_matrix(self.problem)
+
+    def to_dense(self) -> np.ndarray:
+        """Backward-compatible alias returning the kernel matrix ``B``.
+
+        Use :meth:`to_dense_operator` when the full matrix ``I - B chi`` is
+        required.
+        """
+
+        return self.to_dense_kernel()

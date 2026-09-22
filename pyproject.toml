@@ -1,49 +1,19 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "em3d"
-version = "0.2.0"
-description = "Volume integral equation solver for 3D electrodynamics on structured grids with FFT acceleration."
-readme = "README.md"
-requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [
-    { name = "Yurchenkov" },
-]
-keywords = ["electrodynamics", "volume-integral-equation", "fft", "scattering", "iterative-solvers"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: Physics",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Typing :: Typed",
-]
-dependencies = ["numpy>=1.26", "scipy>=1.11"]
+version = "0.3.0"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "matplotlib", "pandas"]
 
-[project.urls]
-Homepage = "https://github.com/qwerty29544/em3d"
-Repository = "https://github.com/qwerty29544/em3d"
-"Bug Tracker" = "https://github.com/qwerty29544/em3d/issues"
-
-[project.optional-dependencies]
-gpu = ["cupy-cuda12x>=13"]
-vis = ["matplotlib>=3.7"]
-dev = ["pytest>=8", "pytest-xdist>=3"]
+[tool.setuptools]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-em3d = ["py.typed"]
-
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "gpu: requires CUDA-capable device and cupy",
-]
+pythonpath = ["src", "."]
+markers = ["gpu: requires CuPy and a CUDA device"]

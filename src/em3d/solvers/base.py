@@ -1,4 +1,3 @@
-"""Solver base classes: config, result, and Protocol."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,22 +6,22 @@ from typing import Any, List, Optional, Protocol
 
 @dataclass
 class SolverConfig:
-    """Configuration shared by all iterative solvers.
-
-    `mu` and `radius` are consumed only by :class:`SIM` (they encode the γ₀
-    iteration parameter computed by :func:`em3d.gamma0.find_params`).
-    :class:`BiCGStab` and :class:`TwoStep` silently ignore these fields.
-    """
-
     max_iter: int = 200
     rtol: float = 1e-6
+    atol: float = 0.0
+    divergence_guard: float | None = None
     log: bool = False
-    mu: Optional[complex] = None     # γ₀ centre — SIM only
-    radius: Optional[float] = None   # γ₀ radius — SIM only
+    mu: Optional[complex] = None
+    radius: Optional[float] = None
 
     def require_gamma(self) -> None:
         if self.mu is None or self.radius is None:
-            raise ValueError("SolverConfig: mu and radius must be set (call gamma0.find_params)")
+            raise ValueError(
+                "SolverConfig: mu and radius must be set "
+                "(call gamma0.find_params)"
+            )
+        if abs(self.mu) == 0.0:
+            raise ValueError("SolverConfig: mu must be non-zero")
 
 
 @dataclass
@@ -31,9 +30,9 @@ class SolverResult:
     iterations: int
     residual_history: List[float]
     converged: bool
+    matvec_count: int = 0
+    status: str = "unknown"
 
 
 class BaseSolver(Protocol):
-    """Iterative solver for problem (I - B·η) u = rhs."""
-
     def solve(self, operator, rhs) -> SolverResult: ...

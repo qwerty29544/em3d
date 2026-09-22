@@ -1,19 +1,17 @@
-"""Problem: Grid + ε-tensor + incident wave + k₀ + volume of Q."""
 from __future__ import annotations
-
+ 
 from dataclasses import dataclass
-
+ 
 from .grid import Grid
-
-
+ 
 @dataclass(frozen=True)
 class Problem:
     grid: Grid
-    eps_tensor: object  # shape (3, 3) + grid.N, complex
-    wave: object        # shape (3,) + grid.N, complex
+    eps_tensor: object
+    wave: object
     k0: float
     volume: float
-
+ 
     def __post_init__(self) -> None:
         be = self.grid.backend
         expected_eta = (3, 3) + self.grid.N
@@ -32,7 +30,17 @@ class Problem:
             )
         if self.wave.dtype != be.complex_dtype:
             raise TypeError(f"wave.dtype {self.wave.dtype} != {be.complex_dtype}")
-
+ 
     @property
     def backend(self):
         return self.grid.backend
+
+    @property
+    def contrast_tensor(self):
+        """Canonical name for the stored tensor ``chi = eps_r - I``.
+
+        ``eps_tensor`` is retained as the public constructor field for backward
+        compatibility with existing experiments.
+        """
+
+        return self.eps_tensor

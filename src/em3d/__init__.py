@@ -1,17 +1,10 @@
-"""em3d: volume-integral-equation solver for 3D electrodynamics on structured grids.
-
-Public API is defined by ``__all__`` below.  The sub-modules ``em3d.kernel``,
-``em3d.dense``, and the helper ``em3d.operator.prep_coeffs_em3d`` are
-intentionally *not* re-exported here — they are implementation details used
-only by integration tests and internal operator assembly.
-"""
 from __future__ import annotations
-
+ 
 from .backend import Backend
 from .dtypes import Precision
 from .grid import Grid
 from .problem import Problem
-from .operator import Operator
+from .operator import Operator, PreparedEMKernel
 from .refraction import (
     apply_refraction,
     cylinder_refraction,
@@ -20,26 +13,31 @@ from .refraction import (
 )
 from .wave import flat_wave_vec
 from . import gamma0
+from . import spectral
+from . import geometry
 from . import farfield
 from . import vis
 from . import mie
 from . import acoustics
 from .solvers import BaseSolver, BiCGStab, SIM, SolverConfig, SolverResult, TwoStep
-
-__version__ = "0.2.0"
-
+ 
+__version__ = "0.3.0"
+ 
 __all__ = [
     "Backend",
     "Precision",
     "Grid",
     "Problem",
     "Operator",
+    "PreparedEMKernel",
     "apply_refraction",
     "cylinder_refraction",
     "ellipsis_refraction",
     "step_refraction",
     "flat_wave_vec",
     "gamma0",
+    "spectral",
+    "geometry",
     "farfield",
     "vis",
     "mie",

@@ -1,32 +1,66 @@
-"""Generalised simple iteration (MSGD) driven by γ₀."""
 from __future__ import annotations
+
+import numpy as np
 
 from .base import SolverConfig, SolverResult
 
 
 class SIM:
     def __init__(self, config: SolverConfig):
-        config.require_gamma()  # ensures mu and radius were set by find_params; radius unused in iteration but required for convergence guarantee
+        config.require_gamma()
         self.cfg = config
 
     def solve(self, operator, rhs) -> SolverResult:
-        be = operator.backend
-        xp = be.xp
-        cfg = self.cfg
-        gamma = 1.0 / cfg.mu  # γ₀ = 1/μ for SIM
-        u = xp.zeros_like(rhs)
+        backend = operator.backend
+        xp = backend.xp
+        config = self.cfg
+        gamma = 1.0 / complex(config.mu)
+        solution = xp.zeros_like(rhs)
         residuals: list[float] = []
-        rhs_norm = float(xp.linalg.norm(rhs))
+        rhs_norm = float(backend.to_host(xp.linalg.norm(rhs)))
         if rhs_norm == 0.0:
-            return SolverResult(u=u, iterations=0, residual_history=[0.0], converged=True)
-        for k in range(cfg.max_iter):
-            Au = operator.matvec(u)
-            r = Au - rhs
-            rel = float(xp.linalg.norm(r)) / rhs_norm
-            residuals.append(rel)
-            if cfg.log:
-                print(f"[SIM] iter={k}, rel_res={rel:.3e}")
-            if rel < cfg.rtol:
-                return SolverResult(u=u, iterations=k, residual_history=residuals, converged=True)
-            u = u - be.complex_dtype(gamma) * r
-        return SolverResult(u=u, iterations=cfg.max_iter, residual_history=residuals, converged=False)
+            return SolverResult(
+                u=solution,
+                iterations=0,
+                residual_history=[0.0],
+                converged=True,
+                matvec_count=0,
+                status="converged",
+            )
+
+        relative_tolerance = max(
+            float(config.rtol), float(config.atol) / rhs_norm
+        )
+        updates = 0
+        status = "max_iter"
+        converged = False
+        for iteration in range(config.max_iter):
+            residual = operator.matvec(solution) - rhs
+            relative = float(backend.to_host(xp.linalg.norm(residual))) / rhs_norm
+            residuals.append(relative)
+            if config.log:
+                print(f"[SIM] iter={iteration}, rel_res={relative:.3e}")
+            if not np.isfinite(relative):
+                status = "nonfinite"
+                break
+            if relative < relative_tolerance:
+                status = "converged"
+                converged = True
+                break
+            if (
+                config.divergence_guard is not None
+                and relative > float(config.divergence_guard)
+            ):
+                status = "divergence_guard"
+                break
+            solution = solution - backend.complex_dtype(gamma) * residual
+            updates += 1
+
+        return SolverResult(
+            u=solution,
+            iterations=updates,
+            residual_history=residuals,
+            converged=converged,
+            matvec_count=len(residuals),
+            status=status,
+        )

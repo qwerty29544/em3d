@@ -10,6 +10,7 @@ class SolverConfig:
     rtol: float = 1e-6
     atol: float = 0.0
     divergence_guard: float | None = None
+    max_operator_actions: int | None = None
     log: bool = False
     mu: Optional[complex] = None
     radius: Optional[float] = None

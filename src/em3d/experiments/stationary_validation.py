@@ -180,6 +180,70 @@ def true_relative_residual(operator: Operator, solution, rhs) -> float:
     return residual_norm / rhs_norm
 
 
+def run_solver_execution(
+    built_case: BuiltSpectralCase,
+    *,
+    solver_name: str,
+    solver_config: SolverConfig,
+    circle: CircleLocalization | None = None,
+    prepared_kernel: PreparedEMKernel | None = None,
+    operator: Operator | None = None,
+    qualification_rtol: float | None = None,
+    retain_solution: bool = True,
+) -> SolverExecution:
+    """Run one solver under the common Chapter 4 qualification protocol.
+
+    A pre-built operator can be supplied so SIM, BiCGStab and TwoStep reuse the
+    same FFT kernel.  Qualification is always based on an independently
+    recomputed true residual, not merely on the solver-specific stopping flag.
+    """
+
+    active_operator = operator or Operator(
+        built_case.problem, prepared_kernel=prepared_kernel
+    )
+    backend = built_case.problem.backend
+    solver = _solver_instance(
+        solver_name,
+        base_config=solver_config,
+        circle=circle,
+    )
+    _synchronize(backend)
+    started = perf_counter()
+    result = solver.solve(active_operator, built_case.problem.wave)
+    _synchronize(backend)
+    elapsed = perf_counter() - started
+    true_residual = true_relative_residual(
+        active_operator, result.u, built_case.problem.wave
+    )
+    result.true_final_residual = float(true_residual)
+    rhs_norm = max(
+        float(backend.to_host(backend.xp.linalg.norm(built_case.problem.wave))),
+        1e-300,
+    )
+    tolerance = (
+        float(qualification_rtol)
+        if qualification_rtol is not None
+        else max(float(solver_config.rtol), float(solver_config.atol) / rhs_norm)
+    )
+    qualified = bool(
+        result.converged
+        and np.isfinite(true_residual)
+        and true_residual <= tolerance * (1.0 + 1e-10)
+    )
+    solution_host = None
+    if retain_solution:
+        solution_host = np.asarray(backend.to_host(result.u), dtype=np.complex128)
+    return SolverExecution(
+        case_key=built_case.definition.key,
+        solver_name=str(solver_name),
+        result=result,
+        elapsed_seconds=float(elapsed),
+        true_relative_residual=float(true_residual),
+        qualified=qualified,
+        solution_host=solution_host,
+    )
+
+
 def run_solver_comparison(
     built_case: BuiltSpectralCase,
     *,
@@ -624,6 +688,7 @@ __all__ = [
     "estimate_parameter_circle",
     "evaluate_mie_solution",
     "run_solver_comparison",
+    "run_solver_execution",
     "select_reference_solver",
     "true_relative_residual",
 ]

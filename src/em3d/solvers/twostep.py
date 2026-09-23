@@ -69,10 +69,23 @@ class TwoStep:
             ):
                 status = "divergence_guard"
                 break
+            if (
+                cfg.max_operator_actions is not None
+                and matvec_count + rmatvec_count >= int(cfg.max_operator_actions)
+            ):
+                status = "max_operator_actions"
+                break
             if updates >= int(cfg.max_iter):
                 status = "max_iter"
                 break
 
+            if (
+                cfg.max_operator_actions is not None
+                and matvec_count + rmatvec_count + 2
+                > int(cfg.max_operator_actions)
+            ):
+                status = "max_operator_actions"
+                break
             gradient = operator.rmatvec(r)
             rmatvec_count += 1
             H_gradient = operator.matvec(gradient)

@@ -35,3 +35,71 @@ def test_prepared_kernel_rejects_incompatible_wave_number():
     prepared = PreparedEMKernel.build(problem.grid, k=2.0)
     with pytest.raises(ValueError, match="wave number"):
         Operator(problem, prepared_kernel=prepared)
+
+
+def test_derived_adjoint_matches_explicit_and_dense():
+    problem = _problem(N=(4, 3, 3), k0=1.7)
+    explicit = PreparedEMKernel.build(
+        problem.grid,
+        k=problem.k0,
+        include_adjoint=True,
+        adjoint_storage="explicit",
+        build_strategy="standard",
+    )
+    derived = PreparedEMKernel.build(
+        problem.grid,
+        k=problem.k0,
+        include_adjoint=True,
+        adjoint_storage="derived",
+        build_strategy="streamed",
+    )
+    random = np.random.default_rng(42)
+    field = (
+        random.standard_normal((3,) + problem.grid.N)
+        + 1j * random.standard_normal((3,) + problem.grid.N)
+    )
+    explicit_result = Operator(problem, prepared_kernel=explicit).rmatvec(field)
+    derived_result = Operator(problem, prepared_kernel=derived).rmatvec(field)
+    np.testing.assert_allclose(derived_result, explicit_result, rtol=1e-12, atol=1e-12)
+
+    matrix = Operator(problem).to_dense_operator()
+    dense = (matrix.conj().T @ field.transpose(1, 2, 3, 0).reshape(-1)).reshape(
+        *problem.grid.N, 3
+    ).transpose(3, 0, 1, 2)
+    np.testing.assert_allclose(derived_result, dense, rtol=1e-12, atol=1e-12)
+
+
+def test_forward_only_kernel_rejects_adjoint_action():
+    problem = _problem()
+    prepared = PreparedEMKernel.build(
+        problem.grid,
+        k=problem.k0,
+        include_adjoint=False,
+        build_strategy="streamed",
+    )
+    operator = Operator(problem, prepared_kernel=prepared)
+    with pytest.raises(RuntimeError, match="adjoint action is unavailable"):
+        operator.rmatvec(problem.wave)
+
+
+def test_streamed_and_standard_forward_kernels_match():
+    problem = _problem(N=(4, 3, 2), k0=2.1)
+    standard = PreparedEMKernel.build(
+        problem.grid,
+        k=problem.k0,
+        include_adjoint=False,
+        build_strategy="standard",
+    )
+    streamed = PreparedEMKernel.build(
+        problem.grid,
+        k=problem.k0,
+        include_adjoint=False,
+        build_strategy="streamed",
+    )
+    np.testing.assert_allclose(
+        streamed.kernel_hat,
+        standard.kernel_hat,
+        rtol=1e-13,
+        atol=1e-13,
+    )
+    assert streamed.persistent_nbytes == streamed.kernel_hat.nbytes

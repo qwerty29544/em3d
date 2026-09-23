@@ -58,6 +58,20 @@ class BiCGStab:
                 status="converged",
                 true_final_residual=initial_relative,
             )
+        if (
+            cfg.max_operator_actions is not None
+            and matvec_count >= int(cfg.max_operator_actions)
+        ):
+            return SolverResult(
+                u=u,
+                iterations=0,
+                residual_history=residuals,
+                converged=False,
+                matvec_count=matvec_count,
+                residual_action_counts=residual_action_counts,
+                status="max_operator_actions",
+                true_final_residual=initial_relative,
+            )
 
         r_hat = xp.asarray(r, dtype=rhs.dtype).copy()
         rho_prev = 1.0 + 0.0j
@@ -84,6 +98,12 @@ class BiCGStab:
                     p - be.complex_dtype(omega) * v
                 )
 
+            if (
+                cfg.max_operator_actions is not None
+                and matvec_count + 1 > int(cfg.max_operator_actions)
+            ):
+                status = "max_operator_actions"
+                break
             v = operator.matvec(p)
             matvec_count += 1
             denominator = complex(be.to_host(xp.vdot(r_hat, v)))
@@ -120,6 +140,16 @@ class BiCGStab:
                 status = "converged"
                 break
 
+            if (
+                cfg.max_operator_actions is not None
+                and matvec_count + 1 > int(cfg.max_operator_actions)
+            ):
+                u = u_alpha
+                completed_updates = iteration + 1
+                residuals.append(s_relative)
+                residual_action_counts.append(matvec_count)
+                status = "max_operator_actions"
+                break
             t = operator.matvec(s)
             matvec_count += 1
             t_norm_sq = complex(be.to_host(xp.vdot(t, t)))

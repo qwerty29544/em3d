@@ -9,6 +9,7 @@ from em3d.experiments.spectral_transfer import (
     check_operator_consistency,
     compute_grid_spectrum,
     diagnose_iteration_spectrum,
+    diagnose_iteration_spectrum_multistart,
     run_parameter_transfer,
 )
 from em3d.geometry import FullDomain
@@ -59,3 +60,21 @@ def test_packaged_spectral_transfer_pipeline_on_small_grids():
         config=ArnoldiConfig(krylov_dimension=6, milestones=(2, 4, 6)),
     )
     assert np.isfinite(diagnostic.spectral_radius)
+
+
+def test_packaged_multistart_arnoldi_keeps_all_runs():
+    backend = Backend.numpy(Precision.DOUBLE)
+    built = build_spectral_case(_case(), grid_shape=2, backend=backend)
+    spectrum = compute_grid_spectrum(built)
+    circle = spectrum.localization.circle
+    assert circle is not None
+    result = diagnose_iteration_spectrum_multistart(
+        built,
+        circle,
+        config=ArnoldiConfig(krylov_dimension=5, milestones=(3, 5)),
+        seeds=(11, 12, 13),
+    )
+    assert len(result.runs) == 3
+    assert result.dominant_run.spectral_radius == max(
+        run.spectral_radius for run in result.runs
+    )

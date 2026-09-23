@@ -26,6 +26,24 @@ from .spectral_transfer import (
     sampling_metrics,
 )
 
+
+from .stationary_validation import (
+    FieldComparisonMetrics,
+    MieReferenceComparison,
+    MieValidationResult,
+    RCSComparisonMetrics,
+    RCSCurve,
+    SolverExecution,
+    compare_fields,
+    compare_rcs_curves,
+    compute_rcs_curve,
+    estimate_parameter_circle,
+    evaluate_mie_solution,
+    run_solver_comparison as run_stationary_solver_comparison,
+    select_reference_solver,
+    true_relative_residual,
+)
+
 from .structured_lattice import (
     ExperimentLogger,
     InclusionSpec,
@@ -59,6 +77,20 @@ __all__ = [
     "material_index_scale",
     "run_parameter_transfer",
     "sampling_metrics",
+    "FieldComparisonMetrics",
+    "MieReferenceComparison",
+    "MieValidationResult",
+    "RCSComparisonMetrics",
+    "RCSCurve",
+    "SolverExecution",
+    "compare_fields",
+    "compare_rcs_curves",
+    "compute_rcs_curve",
+    "estimate_parameter_circle",
+    "evaluate_mie_solution",
+    "run_stationary_solver_comparison",
+    "select_reference_solver",
+    "true_relative_residual",
     "ExperimentLogger",
     "InclusionSpec",
     "MaterialSpec",

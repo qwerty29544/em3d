@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Optional, Protocol
 
 
@@ -31,7 +31,16 @@ class SolverResult:
     residual_history: List[float]
     converged: bool
     matvec_count: int = 0
+    rmatvec_count: int = 0
+    residual_action_counts: List[int] = field(default_factory=list)
     status: str = "unknown"
+    true_final_residual: float | None = None
+
+    @property
+    def operator_action_count(self) -> int:
+        """Total number of forward and adjoint operator applications."""
+
+        return int(self.matvec_count + self.rmatvec_count)
 
 
 class BaseSolver(Protocol):

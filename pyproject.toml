@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "em3d"
+version = "0.6.0"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "matplotlib", "pandas"]
+
+[project.optional-dependencies]
+cuda12 = ["cupy-cuda12x>=13"]
+cuda13 = ["cupy-cuda13x>=14"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+markers = ["gpu: requires CuPy and a CUDA device"]

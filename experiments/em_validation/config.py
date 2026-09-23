@@ -281,6 +281,7 @@ class MieJobSpec:
     render_field_slices: bool = False
     render_rcs: bool = True
     optional: bool = False
+    variant_label: str = ""
 
     @property
     def key(self) -> str:
@@ -289,7 +290,8 @@ class MieJobSpec:
         if abs(eps.imag) > 1e-15:
             eps_token += f"_i{eps.imag:g}".replace("-", "m").replace(".", "p")
         k_token = f"{float(self.k0a):g}".replace("-", "m").replace(".", "p")
-        return f"mie_eps{eps_token}_k0a{k_token}_N{int(self.grid_size)}"
+        suffix = f"_{self.variant_label}" if self.variant_label else ""
+        return f"mie_eps{eps_token}_k0a{k_token}_N{int(self.grid_size)}{suffix}"
 
 
 @dataclass(frozen=True)
@@ -301,10 +303,38 @@ class StationaryGridJobSpec:
     render_field_slices: bool = False
     render_rcs: bool = True
     optional: bool = False
+    parameter_strategy: Literal[
+        "inherit", "single_coarse", "coarse_ensemble"
+    ] = "inherit"
+    coarse_sizes: tuple[int, ...] = ()
+    variant_label: str = ""
+
+    def __post_init__(self) -> None:
+        if self.grid_size <= 0:
+            raise ValueError("grid_size must be positive")
+        if self.true_rtol <= 0.0:
+            raise ValueError("true_rtol must be positive")
+        if any(value <= 0 for value in self.coarse_sizes):
+            raise ValueError("coarse_sizes must contain positive integers")
+        if self.parameter_strategy == "single_coarse" and len(self.coarse_sizes) != 1:
+            raise ValueError("single_coarse requires exactly one coarse size")
+        if self.parameter_strategy == "coarse_ensemble" and not self.coarse_sizes:
+            raise ValueError("coarse_ensemble requires at least one coarse size")
+
+    def resolved_parameter_strategy(
+        self, solver_suite: SolverSuiteConfig
+    ) -> tuple[str, tuple[int, ...]]:
+        if self.parameter_strategy == "inherit":
+            return (
+                solver_suite.sim_parameter_strategy,
+                tuple(int(value) for value in solver_suite.sim_coarse_sizes),
+            )
+        return self.parameter_strategy, tuple(int(value) for value in self.coarse_sizes)
 
     @property
     def key(self) -> str:
-        return f"{self.case_key}_N{int(self.grid_size)}"
+        suffix = f"_{self.variant_label}" if self.variant_label else ""
+        return f"{self.case_key}{suffix}_N{int(self.grid_size)}"
 
 
 @dataclass(frozen=True)
@@ -320,6 +350,8 @@ class LargeGridStudyConfig:
     domain_length: float = 1.0
     rcs_n_phi: int = 720
     require_mie_nearfield_gate: bool = True
+    compare_farfield_backends: bool = True
+    farfield_backend_max_grid: int = 24
     output_root: Path = Path("experiments/outputs/em_validation_large")
     resume: bool = True
 
@@ -328,6 +360,8 @@ class LargeGridStudyConfig:
             raise ValueError("domain_length must exceed the sphere diameter")
         if self.rcs_n_phi < 36:
             raise ValueError("rcs_n_phi must be at least 36")
+        if self.farfield_backend_max_grid <= 0:
+            raise ValueError("farfield_backend_max_grid must be positive")
         keys = [job.key for job in self.mie_jobs]
         if len(keys) != len(set(keys)):
             raise ValueError("mie_jobs contain duplicate physical/grid jobs")

@@ -134,18 +134,43 @@ class ArtifactStore:
         for directory in (self.root, self.tables, self.raw, self.figures, self.logs):
             directory.mkdir(parents=True, exist_ok=True)
         self._artifacts: list[dict[str, Any]] = []
+        self._artifact_paths: set[str] = set()
+        self._event_log = self.logs / "events.jsonl"
 
     def _record(self, path: Path, kind: str) -> Path:
+        relative = str(path.relative_to(self.root))
+        if relative in self._artifact_paths:
+            return path
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         self._artifacts.append(
             {
-                "path": str(path.relative_to(self.root)),
+                "path": relative,
                 "kind": kind,
                 "sha256": digest,
                 "bytes": path.stat().st_size,
             }
         )
+        self._artifact_paths.add(relative)
         return path
+
+    def log_event(self, event: str, **payload: Any) -> Path:
+        """Append one structured event to ``logs/events.jsonl``.
+
+        The log is intentionally compact and independent of notebook output so
+        long Kaggle campaigns can be audited even when only raw/tables/logs are
+        downloaded.
+        """
+
+        row = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": str(event),
+            **payload,
+        }
+        with self._event_log.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(row, ensure_ascii=False, default=_json_default) + "\n"
+            )
+        return self._event_log
 
     def record_existing(
         self,
@@ -226,6 +251,9 @@ class ArtifactStore:
         return tuple(paths)
 
     def finalize(self, *, config: Any, status: str = "complete") -> Path:
+        self.log_event("run_finalize", status=status)
+        if self._event_log.is_file():
+            self._record(self._event_log, "jsonl")
         config_digest = hashlib.sha256(_stable_json_bytes(config)).hexdigest()
         manifest = {
             "schema": self.schema,

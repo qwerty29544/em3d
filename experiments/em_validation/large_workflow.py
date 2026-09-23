@@ -500,6 +500,55 @@ def _estimate_ensemble_circle(
         return None, rows, f"{type(exc).__name__}: {exc}"
 
 
+def _estimate_parameter_circle(
+    definition: SpectralCaseDefinition,
+    *,
+    strategy: str,
+    levels: tuple[int, ...],
+) -> tuple[CircleLocalization | None, list[dict[str, Any]], str | None]:
+    """Estimate the SIM circle using one coarse grid or an ensemble.
+
+    The distinction is scientifically important for the local-inclusion
+    stress test: a single N_H=5 localization is intentionally preserved as
+    an unstable transfer example, while the 5+6+7 ensemble demonstrates the
+    corrective effect of robust localization.
+    """
+
+    if strategy == "coarse_ensemble":
+        return _estimate_ensemble_circle(definition, levels=levels)
+    if strategy != "single_coarse":
+        return None, [], f"unsupported parameter strategy {strategy!r}"
+    if len(levels) != 1:
+        return None, [], "single_coarse requires exactly one level"
+
+    level = int(levels[0])
+    try:
+        built = build_spectral_case(
+            definition,
+            grid_shape=level,
+            backend=em3d.Backend.numpy(),
+            sampling_mode=SamplingMode.CELL_CENTER,
+        )
+        run = compute_grid_spectrum(built)
+        circle = run.localization.circle
+        row = {
+            "case_key": definition.key,
+            "parameter_strategy": "single_coarse",
+            "coarse_level": level,
+            "localization_status": run.localization.status.value,
+            "mu_real": float(np.real(circle.mu)) if circle else np.nan,
+            "mu_imag": float(np.imag(circle.mu)) if circle else np.nan,
+            "radius": float(circle.radius) if circle else np.nan,
+            "q": float(circle.q) if circle else np.nan,
+            "margin": float(circle.margin) if circle else np.nan,
+        }
+        if circle is None:
+            return None, [row], "single coarse localization has no admissible circle"
+        return circle, [row], None
+    except Exception as exc:
+        return None, [], f"{type(exc).__name__}: {exc}"
+
+
 def _run_mie_nearfield_gate(store: ArtifactStore) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     xyz = np.array(
@@ -713,6 +762,15 @@ def _process_mie_job(
         config,
         f"[Mie] start {job.key}: eps={job.eps_r}, k0a={job.k0a:g}, N={job.grid_size}",
     )
+    store.log_event(
+        "job_start",
+        study="mie",
+        job_key=job.key,
+        grid_size=job.grid_size,
+        eps_real=extra["eps_real"],
+        eps_imag=extra["eps_imag"],
+        k0a=extra["k0a"],
+    )
 
     if definition.key not in circle_cache:
         circle, parameter_rows, error = _estimate_ensemble_circle(
@@ -775,6 +833,13 @@ def _process_mie_job(
                 **extra,
                 "grid_size": job.grid_size,
             }
+        )
+        store.log_event(
+            "job_finish",
+            study="mie",
+            job_key=job.key,
+            status="skipped_memory",
+            elapsed_seconds=perf_counter() - started,
         )
         return
 
@@ -997,6 +1062,47 @@ def _process_mie_job(
         curves_by_plane: dict[str, dict[str, RCSCurve]] = {}
         for curve in curves:
             curves_by_plane.setdefault(curve.plane, {})[curve.solver_name] = curve
+
+        # A small-grid direct-vs-FFT far-field diagnostic supports the method
+        # section without applying the interpolation-based FFT postprocessor
+        # to memory-intensive large grids.  It is diagnostic, not a solver gate.
+        reference_execution = execution_by_name.get(
+            config.solver_suite.reference_solver
+        )
+        if (
+            config.compare_farfield_backends
+            and job.grid_size <= config.farfield_backend_max_grid
+            and reference_execution is not None
+            and reference_execution.qualified
+        ):
+            for plane in config.visualization.rcs_planes:
+                direct_curve = curves_by_plane.get(plane, {}).get(
+                    config.solver_suite.reference_solver
+                )
+                if direct_curve is None:
+                    continue
+                fft_curve = compute_rcs_curve(
+                    reference_execution,
+                    built,
+                    n_phi=config.rcs_n_phi,
+                    plane=plane,
+                    method="fft",
+                )
+                metrics = compare_rcs_curves(fft_curve, direct_curve)
+                tables["farfield_backend_consistency"].append(
+                    {
+                        "job_key": job.key,
+                        "case_key": definition.key,
+                        "grid_size": job.grid_size,
+                        "solver_name": config.solver_suite.reference_solver,
+                        "plane": plane,
+                        "candidate_backend": "fft_interpolation",
+                        "reference_backend": "direct_quadrature",
+                        **extra,
+                        **asdict(metrics),
+                    }
+                )
+
         for plane in config.visualization.rcs_planes:
             nominal_curve = _analytic_rcs_curve(
                 nominal_radius,
@@ -1216,6 +1322,14 @@ def _process_mie_job(
                 **extra,
             }
         )
+        store.log_event(
+            "job_finish",
+            study="mie",
+            job_key=job.key,
+            status="complete",
+            elapsed_seconds=perf_counter() - started,
+            qualified_solvers=sum(item.qualified for item in executions),
+        )
         _progress(
             config,
             f"[Mie] finish {job.key}: qualified "
@@ -1241,6 +1355,14 @@ def _process_mie_job(
                 **extra,
             }
         )
+        store.log_event(
+            "job_finish",
+            study="mie",
+            job_key=job.key,
+            status=status,
+            error=error,
+            elapsed_seconds=perf_counter() - started,
+        )
         if not is_oom or config.memory_policy.oom_behavior == "raise":
             raise
     finally:
@@ -1264,16 +1386,47 @@ def _process_stationary_job(
     if job.case_key not in catalog:
         raise KeyError(f"unknown stationary case {job.case_key!r}")
     definition = catalog[job.case_key]
-    if definition.key not in circle_cache:
-        circle, parameter_rows, error = _estimate_ensemble_circle(
+    parameter_strategy, coarse_sizes = job.resolved_parameter_strategy(
+        config.solver_suite
+    )
+    cache_key = (
+        f"{definition.key}|{parameter_strategy}|"
+        + "+".join(str(value) for value in coarse_sizes)
+    )
+    if cache_key not in circle_cache:
+        circle, parameter_rows, error = _estimate_parameter_circle(
             definition,
-            levels=config.solver_suite.sim_coarse_sizes,
+            strategy=parameter_strategy,
+            levels=coarse_sizes,
         )
-        circle_cache[definition.key] = (circle, error)
+        circle_cache[cache_key] = (circle, error)
         for row in parameter_rows:
-            row["case_key_requested"] = job.case_key
+            row.update(
+                {
+                    "job_key": job.key,
+                    "case_key_requested": job.case_key,
+                    "variant_label": job.variant_label,
+                    "parameter_strategy_requested": parameter_strategy,
+                    "coarse_sizes_requested": "+".join(
+                        str(value) for value in coarse_sizes
+                    ),
+                }
+            )
             tables["stationary_sim_parameters"].append(row)
-    circle, circle_error = circle_cache[definition.key]
+    circle, circle_error = circle_cache[cache_key]
+    parameter_extra = {
+        "variant_label": job.variant_label,
+        "parameter_strategy": parameter_strategy,
+        "coarse_sizes": "+".join(str(value) for value in coarse_sizes),
+    }
+    store.log_event(
+        "job_start",
+        study="stationary",
+        job_key=job.key,
+        case_key=job.case_key,
+        grid_size=job.grid_size,
+        **parameter_extra,
+    )
 
     built = build_spectral_case(
         definition,
@@ -1310,6 +1463,7 @@ def _process_stationary_job(
                     study="stationary",
                     requested_rtol=job.true_rtol,
                     error=decision.reason,
+                    extra=parameter_extra,
                 )
             )
         tables["job_status"].append(
@@ -1320,7 +1474,15 @@ def _process_stationary_job(
                 "error": decision.reason,
                 "elapsed_seconds": perf_counter() - started,
                 "grid_size": job.grid_size,
+                **parameter_extra,
             }
+        )
+        store.log_event(
+            "job_finish",
+            study="stationary",
+            job_key=job.key,
+            status="skipped_memory",
+            elapsed_seconds=perf_counter() - started,
         )
         return
 
@@ -1350,7 +1512,8 @@ def _process_stationary_job(
                         tier=job.tier,
                         study="stationary",
                         requested_rtol=job.true_rtol,
-                        error=circle_error or "no admissible ensemble circle",
+                        error=circle_error or "no admissible spectral circle",
+                        extra=parameter_extra,
                     )
                 )
                 continue
@@ -1374,6 +1537,7 @@ def _process_stationary_job(
                     requested_rtol=job.true_rtol,
                     circle=circle,
                     study="stationary",
+                    extra=parameter_extra,
                 )
             )
             store.write_npz(
@@ -1508,7 +1672,17 @@ def _process_stationary_job(
                 "error": "",
                 "elapsed_seconds": perf_counter() - started,
                 "grid_size": job.grid_size,
+                **parameter_extra,
             }
+        )
+        store.log_event(
+            "job_finish",
+            study="stationary",
+            job_key=job.key,
+            status="complete",
+            elapsed_seconds=perf_counter() - started,
+            qualified_solvers=sum(item.qualified for item in executions),
+            **parameter_extra,
         )
     finally:
         gc.collect()
@@ -1529,6 +1703,7 @@ def _initial_tables() -> dict[str, list[dict[str, Any]]]:
         "mie_solver_vs_mie_fields",
         "mie_solver_vs_mie_rcs",
         "mie_rcs_by_plane",
+        "farfield_backend_consistency",
         "mie_grid_convergence_by_solver",
         "mie_observed_orders_by_solver",
         "stationary_sim_parameters",
@@ -1593,6 +1768,14 @@ def run_large_grid_suite(config: LargeGridStudyConfig) -> LargeGridSuiteResult:
     figure_rows = tables["figure_index"]
     backend = _backend(config)
     store.write_json("config.json", config)
+    store.log_event(
+        "run_start",
+        profile=config.profile,
+        mie_jobs=len(config.mie_jobs),
+        stationary_jobs=len(config.stationary_jobs),
+        device=config.runtime.device,
+        precision=config.runtime.precision,
+    )
 
     if config.require_mie_nearfield_gate:
         gate_rows = _run_mie_nearfield_gate(store)

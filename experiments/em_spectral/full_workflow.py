@@ -9,6 +9,10 @@ from em3d.experiments.spectral_transfer import (
 )
 
 from .artifacts import ArtifactStore
+from .chapter42_spectrum import (
+    FixedSpectrumStudyResult,
+    run_fixed_spectrum_study,
+)
 from .config import SpectralStudyConfig
 from .ensemble_transfer import (
     EnsembleTransferStudyResult,
@@ -32,6 +36,7 @@ from .workflow import SpectralStudyResult, run_spectral_transfer_study
 @dataclass(frozen=True)
 class SpectralExperimentSuiteResult:
     config: SpectralStudyConfig
+    fixed_spectrum: FixedSpectrumStudyResult | None
     core: SpectralStudyResult | None
     geometry: GeometryResolutionStudyResult | None
     volume_averaging: VolumeAveragingStudyResult | None
@@ -44,6 +49,7 @@ def run_spectral_experiment_suite(
     config: SpectralStudyConfig,
     *,
     cases: Iterable[SpectralCaseDefinition] | None = None,
+    include_fixed_spectrum: bool = True,
     include_core: bool = True,
     include_geometry: bool = True,
     include_volume_averaging: bool = True,
@@ -67,15 +73,36 @@ def run_spectral_experiment_suite(
 
     store = ArtifactStore(config.output_root)
     store.write_json("config.json", config)
+    store.log_event(
+        "run_start",
+        profile="spectral",
+        mode=config.mode,
+        device=config.runtime.device,
+        include_fixed_spectrum=include_fixed_spectrum,
+        include_core=include_core,
+        include_geometry=include_geometry,
+        include_volume_averaging=include_volume_averaging,
+        include_ensemble=include_ensemble,
+        include_wave_number=include_wave_number,
+    )
     definitions = tuple(default_article_cases() if cases is None else cases)
 
+    fixed_spectrum = None
     core = None
     geometry = None
     volume = None
     ensemble = None
     wave = None
 
+    if include_fixed_spectrum:
+        fixed_spectrum = run_fixed_spectrum_study(
+            config,
+            store=store,
+            render_figures=render_figures,
+        )
+
     if include_core:
+        store.log_event("study_start", study="spectral_core")
         core = run_spectral_transfer_study(
             config,
             cases=definitions,
@@ -85,17 +112,21 @@ def run_spectral_experiment_suite(
             finalize=False,
             write_config=False,
         )
+        store.log_event("study_finish", study="spectral_core")
 
     if include_geometry:
+        store.log_event("study_start", study="geometry_resolution")
         geometry = run_geometry_resolution_study(
             config,
             store=store,
             include_fine=include_fine,
             finalize=False,
         )
+        store.log_event("study_finish", study="geometry_resolution")
 
     if include_volume_averaging:
         assert geometry is not None
+        store.log_event("study_start", study="volume_averaging")
         volume = run_volume_averaging_study(
             config,
             geometry,
@@ -103,9 +134,11 @@ def run_spectral_experiment_suite(
             include_fine=include_fine,
             finalize=False,
         )
+        store.log_event("study_finish", study="volume_averaging")
 
     if include_ensemble:
         assert geometry is not None
+        store.log_event("study_start", study="ensemble_transfer")
         ensemble = run_ensemble_transfer_study(
             config,
             geometry,
@@ -113,8 +146,10 @@ def run_spectral_experiment_suite(
             include_fine=include_fine,
             finalize=False,
         )
+        store.log_event("study_finish", study="ensemble_transfer")
 
     if include_wave_number:
+        store.log_event("study_start", study="wave_number_phase")
         wave = run_wave_number_phase_study(
             config,
             store=store,
@@ -122,8 +157,14 @@ def run_spectral_experiment_suite(
             include_arnoldi=include_boundary_arnoldi,
             finalize=False,
         )
+        store.log_event("study_finish", study="wave_number_phase")
 
     protocol = [
+        {
+            "experiment": "S4.2",
+            "purpose": "fixed-grid material and wave-number spectrum scan",
+            "executed": bool(include_fixed_spectrum),
+        },
         {
             "experiment": "E0",
             "purpose": "dense/FFT operator consistency",
@@ -240,6 +281,7 @@ def run_spectral_experiment_suite(
 
     return SpectralExperimentSuiteResult(
         config=config,
+        fixed_spectrum=fixed_spectrum,
         core=core,
         geometry=geometry,
         volume_averaging=volume,

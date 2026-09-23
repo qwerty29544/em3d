@@ -50,7 +50,13 @@ def _main_mie_jobs() -> tuple[MieJobSpec, ...]:
 
 def _audit_mie_jobs() -> tuple[MieJobSpec, ...]:
     jobs: list[MieJobSpec] = []
-    for eps_r, k0a in ((1.5 + 0.0j, 1.0), (2.25 + 0.0j, 2.0), (4.0 + 0.0j, 4.0)):
+    for eps_r, k0a in (
+        (1.5 + 0.0j, 1.0),
+        (1.5 + 0.0j, 4.0),
+        (2.25 + 0.0j, 2.0),
+        (4.0 + 0.0j, 1.0),
+        (4.0 + 0.0j, 4.0),
+    ):
         for grid_size in (48, 64):
             jobs.append(
                 MieJobSpec(
@@ -61,6 +67,7 @@ def _audit_mie_jobs() -> tuple[MieJobSpec, ...]:
                     true_rtol=1e-8,
                     compute_full_field_metrics=True,
                     render_field_slices=grid_size == 64,
+                    variant_label="audit_rtol1e-8",
                 )
             )
     return tuple(jobs)
@@ -120,18 +127,47 @@ def _stationary_jobs(profile: LargeRunProfile, *, include_optional: bool):
             ),
         )
     if profile == "main64":
-        return tuple(
+        return (
             StationaryGridJobSpec(
-                case_key=case_key,
+                case_key="anisotropic_ellipsoid",
                 grid_size=64,
                 tier="main",
                 render_field_slices=True,
-            )
-            for case_key in (
-                "anisotropic_ellipsoid",
-                "local_inclusion_stable",
-                "local_inclusion_stress",
-            )
+                parameter_strategy="coarse_ensemble",
+                coarse_sizes=(5, 6, 7),
+                variant_label="ensemble_5_6_7",
+            ),
+            StationaryGridJobSpec(
+                case_key="local_inclusion_stable",
+                grid_size=64,
+                tier="main",
+                render_field_slices=True,
+                parameter_strategy="coarse_ensemble",
+                coarse_sizes=(5, 6, 7),
+                variant_label="ensemble_5_6_7",
+            ),
+            # The two jobs below are deliberately the same physical problem.
+            # They isolate the effect of the spectral parameter construction:
+            # a single N_H=5 localization is unstable, while the 5+6+7
+            # ensemble is expected to restore a safe parameter.
+            StationaryGridJobSpec(
+                case_key="local_inclusion_stress",
+                grid_size=64,
+                tier="main",
+                render_field_slices=False,
+                parameter_strategy="single_coarse",
+                coarse_sizes=(5,),
+                variant_label="single_N5",
+            ),
+            StationaryGridJobSpec(
+                case_key="local_inclusion_stress",
+                grid_size=64,
+                tier="main",
+                render_field_slices=True,
+                parameter_strategy="coarse_ensemble",
+                coarse_sizes=(5, 6, 7),
+                variant_label="ensemble_5_6_7",
+            ),
         )
     if profile == "control96":
         return tuple(
@@ -140,6 +176,9 @@ def _stationary_jobs(profile: LargeRunProfile, *, include_optional: bool):
                 grid_size=96,
                 tier="control",
                 render_field_slices=True,
+                parameter_strategy="coarse_ensemble",
+                coarse_sizes=(5, 6, 7),
+                variant_label="ensemble_5_6_7",
             )
             for case_key in (
                 "anisotropic_ellipsoid",
@@ -158,6 +197,9 @@ def _stationary_jobs(profile: LargeRunProfile, *, include_optional: bool):
                 tier="optional" if case_key == "local_inclusion_stress" else "control",
                 render_field_slices=True,
                 optional=case_key == "local_inclusion_stress",
+                parameter_strategy="coarse_ensemble",
+                coarse_sizes=(5, 6, 7),
+                variant_label="ensemble_5_6_7",
             )
             for case_key in keys
         )
@@ -199,7 +241,7 @@ def build_large_grid_config(
             ),
             sim_coarse_sizes=(3, 4),
         )
-        rcs_n_phi = 72
+        rcs_n_phi = 36
     elif profile == "main64":
         mie_jobs = _main_mie_jobs()
         solver_suite = SolverSuiteConfig()
@@ -242,11 +284,22 @@ def build_large_grid_config(
         if profile == "control128"
         else CudaMemoryPolicy()
     )
+    visualization = (
+        VisualizationConfig(
+            field_planes=("xz",),
+            rcs_planes=("xz",),
+            rcs_coordinate_systems=("cartesian", "polar"),
+            save_formats=("png",),
+            create_subtree_archives=False,
+        )
+        if profile == "smoke"
+        else VisualizationConfig()
+    )
     return LargeGridStudyConfig(
         profile=profile,
         runtime=runtime,
         solver_suite=solver_suite,
-        visualization=VisualizationConfig(),
+        visualization=visualization,
         memory_policy=memory_policy,
         mie_jobs=tuple(mie_jobs),
         stationary_jobs=tuple(stationary_jobs),

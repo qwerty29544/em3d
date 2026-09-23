@@ -4,6 +4,12 @@ from .config import (
     RuntimeConfig,
     SolverStudyConfig,
     ValidationStudyConfig,
+    LargeGridStudyConfig,
+    SolverSuiteConfig,
+    VisualizationConfig,
+    CudaMemoryPolicy,
+    MieJobSpec,
+    StationaryGridJobSpec,
 )
 from .kaggle import (
     KaggleBatchPlan,
@@ -11,6 +17,8 @@ from .kaggle import (
     publication_config_for_kaggle,
     write_session_metadata,
 )
+from .planner import build_large_grid_config
+from .large_workflow import LargeGridSuiteResult, run_large_grid_suite
 from .workflow import (
     MieCaseStudyResult,
     MieFieldSliceSet,
@@ -25,6 +33,15 @@ __all__ = [
     "publication_config_for_kaggle",
     "archive_results",
     "KaggleBatchPlan",
+    "LargeGridStudyConfig",
+    "LargeGridSuiteResult",
+    "SolverSuiteConfig",
+    "VisualizationConfig",
+    "CudaMemoryPolicy",
+    "MieJobSpec",
+    "StationaryGridJobSpec",
+    "build_large_grid_config",
+    "run_large_grid_suite",
     "MieCaseStudyResult",
     "MieFieldSliceSet",
     "MieRCSCurveSet",

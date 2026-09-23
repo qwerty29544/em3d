@@ -66,6 +66,12 @@ class SIM:
             ):
                 status = "divergence_guard"
                 break
+            if (
+                config.max_operator_actions is not None
+                and matvec_count >= int(config.max_operator_actions)
+            ):
+                status = "max_operator_actions"
+                break
             if updates >= int(config.max_iter):
                 status = "max_iter"
                 break

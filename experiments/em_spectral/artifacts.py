@@ -147,6 +147,20 @@ class ArtifactStore:
         )
         return path
 
+    def record_existing(
+        self,
+        relative_path: str | Path,
+        *,
+        kind: str | None = None,
+    ) -> Path:
+        """Register an already-created artifact in the final manifest."""
+
+        path = self.root / relative_path
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        inferred = kind or path.suffix.lower().lstrip(".") or "file"
+        return self._record(path, inferred)
+
     def write_json(self, relative_path: str | Path, value: Any) -> Path:
         path = self.root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)

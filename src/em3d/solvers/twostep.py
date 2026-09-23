@@ -1,5 +1,6 @@
-"""Two-step gradient descent (MSGD/TwoSGD) using matvec and rmatvec."""
 from __future__ import annotations
+
+import numpy as np
 
 from .base import SolverConfig, SolverResult
 
@@ -16,37 +17,76 @@ class TwoStep:
         be = operator.backend
         xp = be.xp
         cfg = self.cfg
-        rhs_norm = float(xp.linalg.norm(rhs))
+        rhs_norm = float(be.to_host(xp.linalg.norm(rhs)))
         residuals: list[float] = []
+        residual_action_counts: list[int] = []
         u = xp.zeros_like(rhs)
         if rhs_norm == 0.0:
-            return SolverResult(u=u, iterations=0, residual_history=[0.0], converged=True)
+            return SolverResult(
+                u=u,
+                iterations=0,
+                residual_history=[0.0],
+                converged=True,
+                matvec_count=0,
+                rmatvec_count=0,
+                residual_action_counts=[0],
+                status="converged",
+                true_final_residual=0.0,
+            )
 
+        tolerance = max(float(cfg.rtol), float(cfg.atol) / rhs_norm)
         previous_u = None
         previous_r = None
-        for k in range(cfg.max_iter):
+        updates = 0
+        matvec_count = 0
+        rmatvec_count = 0
+        status = "max_iter"
+
+        # As for SIM, the final residual is explicitly evaluated after the last
+        # permitted update.  Action counts include both A and A* applications.
+        while True:
             Au = operator.matvec(u)
+            matvec_count += 1
             r = Au - rhs
-            rel = float(xp.linalg.norm(r)) / rhs_norm
-            residuals.append(rel)
+            relative = float(be.to_host(xp.linalg.norm(r))) / rhs_norm
+            residuals.append(relative)
+            residual_action_counts.append(matvec_count + rmatvec_count)
             if cfg.log:
-                print(f"[TwoStep] iter={k}, rel_res={rel:.3e}")
-            if rel < cfg.rtol:
-                return SolverResult(u=u, iterations=k, residual_history=residuals, converged=True)
+                print(
+                    f"[TwoStep] updates={updates}, "
+                    f"actions={matvec_count + rmatvec_count}, "
+                    f"rel_res={relative:.3e}"
+                )
+            if not np.isfinite(relative):
+                status = "nonfinite"
+                break
+            if relative < tolerance:
+                status = "converged"
+                break
+            if (
+                cfg.divergence_guard is not None
+                and relative > float(cfg.divergence_guard)
+            ):
+                status = "divergence_guard"
+                break
+            if updates >= int(cfg.max_iter):
+                status = "max_iter"
+                break
 
             gradient = operator.rmatvec(r)
+            rmatvec_count += 1
             H_gradient = operator.matvec(gradient)
+            matvec_count += 1
             H_gradient_norm_sq = _real_inner(xp, H_gradient, H_gradient)
-            if H_gradient_norm_sq == 0.0:
-                return SolverResult(u=u, iterations=k, residual_history=residuals, converged=False)
+            if not np.isfinite(H_gradient_norm_sq) or H_gradient_norm_sq <= 0.0:
+                status = "breakdown_gradient"
+                break
 
             if previous_u is None:
-                # First MSGD step: one-dimensional steepest descent.
                 gradient_norm_sq = _real_inner(xp, gradient, gradient)
                 h = gradient_norm_sq / H_gradient_norm_sq
                 next_u = u - be.complex_dtype(h) * gradient
             else:
-                # Two-step MSGD recurrence from the local 2x2 minimization.
                 delta_r = r - previous_r
                 a00 = _real_inner(xp, delta_r, delta_r)
                 a01 = _real_inner(xp, delta_r, H_gradient)
@@ -56,16 +96,31 @@ class TwoStep:
                 det = a00 * a11 - a01 * a01
                 det_scale = max(abs(a00 * a11), abs(a01 * a01), 1.0)
                 if abs(det) <= 1e-14 * det_scale:
-                    # Degenerate two-dimensional subspace: fall back to the
-                    # one-dimensional residual minimizer along H* r_k.
                     t = 0.0
                     h = b1 / a11
                 else:
                     t = (b0 * a11 - b1 * a01) / det
                     h = (a00 * b1 - a01 * b0) / det
-                next_u = u - be.complex_dtype(t) * (u - previous_u) - be.complex_dtype(h) * gradient
+                next_u = (
+                    u
+                    - be.complex_dtype(t) * (u - previous_u)
+                    - be.complex_dtype(h) * gradient
+                )
 
             previous_u = u
             previous_r = r
             u = next_u
-        return SolverResult(u=u, iterations=cfg.max_iter, residual_history=residuals, converged=False)
+            updates += 1
+
+        converged = status == "converged"
+        return SolverResult(
+            u=u,
+            iterations=updates,
+            residual_history=residuals,
+            converged=converged,
+            matvec_count=matvec_count,
+            rmatvec_count=rmatvec_count,
+            residual_action_counts=residual_action_counts,
+            status=status,
+            true_final_residual=float(residuals[-1]),
+        )

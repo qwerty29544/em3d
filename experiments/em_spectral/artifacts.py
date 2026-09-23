@@ -69,8 +69,14 @@ def _stable_json_bytes(value: Any) -> bytes:
 
 
 class ArtifactStore:
-    def __init__(self, root: str | Path):
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        schema: str = "em3d-spectral-transfer-artifacts-v1",
+    ):
         self.root = Path(root)
+        self.schema = str(schema)
         self.tables = self.root / "tables"
         self.raw = self.root / "raw"
         self.figures = self.root / "figures"
@@ -158,7 +164,7 @@ class ArtifactStore:
     def finalize(self, *, config: Any, status: str = "complete") -> Path:
         config_digest = hashlib.sha256(_stable_json_bytes(config)).hexdigest()
         manifest = {
-            "schema": "em3d-spectral-transfer-artifacts-v1",
+            "schema": self.schema,
             "status": status,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "git_commit": _git_commit(),

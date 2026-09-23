@@ -102,6 +102,23 @@ def _backend(runtime: RuntimeConfig) -> em3d.Backend:
     return em3d.Backend.auto(precision)
 
 
+def _format_memory(backend: em3d.Backend) -> str:
+    info = backend.memory_info()
+    if info is None:
+        return "cpu"
+    gib = 1024.0 ** 3
+    return (
+        f"gpu={info['device_name']}, "
+        f"free={float(info['free_bytes']) / gib:.2f} GiB, "
+        f"pool={float(info['pool_total_bytes']) / gib:.2f} GiB"
+    )
+
+
+def _progress(config: ValidationStudyConfig, message: str, backend: em3d.Backend) -> None:
+    if config.runtime.progress:
+        print(f"{message} [{_format_memory(backend)}]", flush=True)
+
+
 def _central_magnitude_slice(field: np.ndarray, grid, *, plane: str):
     magnitude = np.sqrt(np.sum(np.abs(field) ** 2, axis=0))
     x = np.asarray(grid.backend.to_host(grid.x), dtype=np.float64)
@@ -390,6 +407,11 @@ def _run_stationary_cases(
         if key not in catalog:
             raise KeyError(f"unknown stationary validation case {key!r}")
         definition = catalog[key]
+        _progress(
+            config,
+            f"[V1-V3] start case={definition.key}, N={config.solver.grid_size}",
+            backend,
+        )
         circle = None
         circle_error = None
         coarse_size = config.solver.coarse_size_for(key)
@@ -516,6 +538,12 @@ def _run_stationary_cases(
                 rcs_metrics=tuple(curve_metrics),
             )
         )
+        _progress(
+            config,
+            f"[V1-V3] finish case={definition.key}, qualified="
+            f"{sum(item.qualified for item in executions)}/{len(executions)}",
+            backend,
+        )
 
     store.write_rows("tables/solver_parameter_circles.csv", circle_rows)
     store.write_rows("tables/solver_runs.csv", solver_rows)
@@ -563,6 +591,12 @@ def _run_mie_cases(
                 circle, circle_error = circle_cache[cache_key]
 
             for grid_size in config.mie.grid_sizes:
+                _progress(
+                    config,
+                    f"[V4] start eps={complex(eps_r)}, k0a={float(k0a):g}, "
+                    f"N={int(grid_size)}",
+                    backend,
+                )
                 built = build_spectral_case(
                     definition,
                     grid_shape=grid_size,
@@ -763,6 +797,25 @@ def _run_mie_cases(
                         field_slices=tuple(field_slices),
                     )
                 )
+                _progress(
+                    config,
+                    f"[V4] finish eps={complex(eps_r)}, k0a={float(k0a):g}, "
+                    f"N={int(grid_size)}, qualified="
+                    f"{sum(item.qualified for item in compact_executions)}/"
+                    f"{len(compact_executions)}",
+                    backend,
+                )
+                # The Mie result retained by the workflow contains host metrics
+                # and compact solver metadata only.  Drop the active CUDA arrays
+                # before the next parameter point so that Kaggle sessions do not
+                # accumulate CuPy memory-pool high-water marks unnecessarily.
+                executions = ()
+                execution = None
+                selected_execution = None
+                qualified_candidates = []
+                built = None
+                if config.runtime.clear_cuda_cache_between_cases:
+                    backend.clear_memory_pool()
 
     store.write_rows("tables/mie_solver_runs.csv", solver_rows)
     store.write_rows("tables/mie_validation.csv", validation_rows)

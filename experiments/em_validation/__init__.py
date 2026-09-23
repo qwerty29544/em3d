@@ -5,6 +5,12 @@ from .config import (
     SolverStudyConfig,
     ValidationStudyConfig,
 )
+from .kaggle import (
+    KaggleBatchPlan,
+    archive_results,
+    publication_config_for_kaggle,
+    write_session_metadata,
+)
 from .workflow import (
     MieCaseStudyResult,
     MieFieldSliceSet,
@@ -15,6 +21,10 @@ from .workflow import (
 )
 
 __all__ = [
+    "write_session_metadata",
+    "publication_config_for_kaggle",
+    "archive_results",
+    "KaggleBatchPlan",
     "MieCaseStudyResult",
     "MieFieldSliceSet",
     "MieRCSCurveSet",

@@ -9,6 +9,8 @@ from typing import Literal
 class RuntimeConfig:
     device: Literal["cpu", "cuda", "auto"] = "auto"
     precision: Literal["single", "double"] = "double"
+    progress: bool = True
+    clear_cuda_cache_between_cases: bool = True
 
 
 @dataclass(frozen=True)

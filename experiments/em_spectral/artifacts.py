@@ -58,6 +58,56 @@ def _git_commit() -> str | None:
     return value or None
 
 
+def _cuda_environment() -> dict[str, Any] | None:
+    """Collect CUDA metadata without making GPU support a hard dependency."""
+
+    try:
+        import cupy as cp
+    except ImportError:
+        return None
+
+    try:
+        available = bool(cp.cuda.is_available())
+    except Exception as exc:  # pragma: no cover - driver-dependent
+        return {
+            "available": False,
+            "cupy_version": getattr(cp, "__version__", None),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    payload: dict[str, Any] = {
+        "available": available,
+        "cupy_version": getattr(cp, "__version__", None),
+    }
+    if not available:
+        return payload
+
+    try:
+        device = cp.cuda.Device()
+        props = cp.cuda.runtime.getDeviceProperties(device.id)
+        name = props.get("name", "unknown")
+        if isinstance(name, bytes):
+            name = name.decode("utf-8", errors="replace")
+        free_bytes, total_bytes = device.mem_info
+        pool = cp.get_default_memory_pool()
+        payload.update(
+            {
+                "device_id": int(device.id),
+                "device_name": str(name),
+                "compute_capability": str(device.compute_capability),
+                "driver_version": int(cp.cuda.runtime.driverGetVersion()),
+                "runtime_version": int(cp.cuda.runtime.runtimeGetVersion()),
+                "free_bytes": int(free_bytes),
+                "total_bytes": int(total_bytes),
+                "memory_pool_used_bytes": int(pool.used_bytes()),
+                "memory_pool_total_bytes": int(pool.total_bytes()),
+            }
+        )
+    except Exception as exc:  # pragma: no cover - driver-dependent
+        payload["telemetry_error"] = f"{type(exc).__name__}: {exc}"
+    return payload
+
+
 def _stable_json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
@@ -173,8 +223,17 @@ class ArtifactStore:
             "platform": platform.platform(),
             "packages": {
                 name: _package_version(name)
-                for name in ("numpy", "scipy", "pandas", "matplotlib", "cupy")
+                for name in (
+                    "numpy",
+                    "scipy",
+                    "pandas",
+                    "matplotlib",
+                    "cupy",
+                    "cupy-cuda12x",
+                    "cupy-cuda13x",
+                )
             },
+            "cuda": _cuda_environment(),
             "config_sha256": config_digest,
             "config": config,
             "artifacts": self._artifacts,

@@ -295,13 +295,18 @@ def compute_rcs_curve(
     method: str = "direct",
     batch_size: int = 64,
 ) -> RCSCurve:
-    if execution.solution_host is None:
-        raise ValueError("RCS evaluation requires a retained host solution")
     backend = built_case.problem.backend
-    field = backend.array(
-        execution.solution_host,
-        dtype=backend.complex_dtype,
-    )
+    if execution.result.u is not None:
+        field = execution.result.u
+    elif execution.solution_host is not None:
+        field = backend.array(
+            execution.solution_host,
+            dtype=backend.complex_dtype,
+        )
+    else:
+        raise ValueError(
+            "RCS evaluation requires either a retained device solution or a host copy"
+        )
     phi, sigma = rcs_plane(
         field,
         built_case.problem,

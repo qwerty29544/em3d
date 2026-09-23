@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from .artifacts import ArtifactStore
 from .config import (
+    FixedSpectrumScanConfig,
     GeometryScanConfig,
     GridHierarchyConfig,
     IterationStudyConfig,
     RuntimeConfig,
     SpectralStudyConfig,
     WaveNumberScanConfig,
+)
+from .chapter42_spectrum import (
+    FixedSpectrumPoint,
+    FixedSpectrumStudyResult,
+    run_fixed_spectrum_study,
 )
 from .ensemble_transfer import (
     EnsembleSideResult,
@@ -45,6 +51,9 @@ __all__ = [
     "CaseStudyResult",
     "EnsembleSideResult",
     "EnsembleTransferStudyResult",
+    "FixedSpectrumPoint",
+    "FixedSpectrumScanConfig",
+    "FixedSpectrumStudyResult",
     "GeometryResolutionStudyResult",
     "GeometryScanConfig",
     "GeometrySideResult",
@@ -61,6 +70,7 @@ __all__ = [
     "WaveNumberScanConfig",
     "make_backend",
     "run_ensemble_transfer_study",
+    "run_fixed_spectrum_study",
     "run_geometry_resolution_study",
     "run_spectral_experiment_suite",
     "run_spectral_transfer_study",

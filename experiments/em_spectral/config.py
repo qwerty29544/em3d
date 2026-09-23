@@ -77,6 +77,50 @@ class WaveNumberScanConfig:
 
 
 @dataclass(frozen=True)
+class FixedSpectrumScanConfig:
+    """Reproducible fixed-grid scans supporting dissertation Section 4.2."""
+
+    grid_size: int
+    real_wave_numbers: tuple[float, ...]
+    lossy_wave_numbers: tuple[float, ...]
+    selected_real_wave_numbers: tuple[float, ...] = (
+        0.0,
+        1.0,
+        2.0,
+        5.0,
+        9.0,
+        10.0,
+    )
+    selected_lossy_wave_numbers: tuple[float, ...] = (
+        0.0,
+        2.0,
+        4.0,
+        6.0,
+        8.0,
+        10.0,
+    )
+    max_iter: int = 1200
+    rtol: float = 1e-6
+    divergence_guard: float = 1e8
+
+    def __post_init__(self) -> None:
+        if self.grid_size <= 0:
+            raise ValueError("grid_size must be positive")
+        for name, values in (
+            ("real_wave_numbers", self.real_wave_numbers),
+            ("lossy_wave_numbers", self.lossy_wave_numbers),
+        ):
+            if not values or any(value < 0.0 for value in values):
+                raise ValueError(f"{name} must contain non-negative values")
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} must not contain duplicates")
+        if self.max_iter <= 0 or self.rtol <= 0.0:
+            raise ValueError("max_iter and rtol must be positive")
+        if self.divergence_guard <= 1.0:
+            raise ValueError("divergence_guard must exceed one")
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     device: Literal["cpu", "cuda", "auto"] = "auto"
     precision: Literal["single", "double"] = "double"
@@ -105,6 +149,13 @@ class SpectralStudyConfig:
             inclusion_side=0.40,
             wave_numbers=(4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0),
             boundary_points=((18.0, 12), (20.0, 12), (20.0, 14)),
+        )
+    )
+    fixed_spectrum: FixedSpectrumScanConfig = field(
+        default_factory=lambda: FixedSpectrumScanConfig(
+            grid_size=6,
+            real_wave_numbers=tuple(float(value) for value in range(0, 11)),
+            lossy_wave_numbers=tuple(float(value) for value in range(0, 11, 2)),
         )
     )
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -149,6 +200,15 @@ class SpectralStudyConfig:
                 wave_numbers=(0.5, 1.0),
                 boundary_points=(),
             ),
+            fixed_spectrum=FixedSpectrumScanConfig(
+                grid_size=3,
+                real_wave_numbers=(0.0, 1.0),
+                lossy_wave_numbers=(0.0, 2.0),
+                selected_real_wave_numbers=(0.0, 1.0),
+                selected_lossy_wave_numbers=(0.0, 2.0),
+                max_iter=80,
+                rtol=1e-5,
+            ),
             runtime=RuntimeConfig(device=device),
             eigenvalue_repeats=1,
             output_root=Path(output_root),
@@ -183,6 +243,11 @@ class SpectralStudyConfig:
                 inclusion_side=0.40,
                 wave_numbers=(4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0),
                 boundary_points=((18.0, 12), (20.0, 12), (20.0, 14)),
+            ),
+            fixed_spectrum=FixedSpectrumScanConfig(
+                grid_size=6,
+                real_wave_numbers=tuple(float(value) for value in range(0, 11)),
+                lossy_wave_numbers=tuple(float(value) for value in range(0, 11, 2)),
             ),
             runtime=RuntimeConfig(device=device),
             eigenvalue_repeats=3,

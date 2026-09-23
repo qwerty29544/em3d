@@ -21,7 +21,7 @@ from . import mie
 from . import acoustics
 from .solvers import BaseSolver, BiCGStab, SIM, SolverConfig, SolverResult, TwoStep
  
-__version__ = "0.7.0"
+__version__ = "0.8.0"
  
 __all__ = [
     "Backend",

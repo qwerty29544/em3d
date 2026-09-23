@@ -11,7 +11,7 @@ def test_export_notebook_code_is_valid_python(tmp_path):
     text = output.read_text(encoding="utf-8")
     assert "SHA-256:" in text
     assert "# %% [cell" in text
-    assert "run_spectral_transfer_study" in text
+    assert "run_spectral_experiment_suite" in text
     assert "# Устойчивость переноса" not in text
     ast.parse(text)
 

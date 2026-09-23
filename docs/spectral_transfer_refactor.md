@@ -1,7 +1,8 @@
-# Spectral-transfer refactor
+# Spectral-transfer experiment package
 
-This change moves the reusable numerical logic of `sim-spectral-stability.ipynb`
-out of the notebook and into the `em3d` package.
+The spectral-transfer study is implemented as a reproducible package workflow.
+The notebook is a report layer and does not contain an independent operator,
+solver, convex-hull implementation or Arnoldi process.
 
 ## Package layers
 
@@ -10,15 +11,44 @@ out of the notebook and into the `em3d` package.
   continuous geometry definitions.
 - `em3d.spectral` contains convex spectral geometry, localization circles,
   transfer bounds, convergence diagnostics and matrix-free Arnoldi.
-- `PreparedEMKernel` allows several material cases with the same grid and wave
-  number to reuse one FFT kernel.
-- `em3d.experiments.spectral_transfer` is a pandas/matplotlib-free experiment
-  API for dense/FFT consistency, full spectra on affordable grids, transfer to a
-  work grid and Arnoldi diagnostics.
+- `PreparedEMKernel` allows material cases with the same grid and wave number to
+  reuse one FFT kernel.
+- `em3d.experiments.spectral_transfer` is a pandas/matplotlib-free API for
+  dense/FFT consistency, full spectra, inter-grid transfer, sampling metrics,
+  ensemble localization and single/multi-start Arnoldi diagnostics.
 - `experiments.em_spectral` contains configuration, artifact persistence,
-  reporting plots and the command-line workflow.
-- `notebooks/em-spectral-transfer.ipynb` is a thin executable report. It does
-  not define the operator, spectral algorithms, solver or Arnoldi process.
+  chapter-level experiment workflows, reporting plots and the command-line API.
+- `notebooks/em-spectral-transfer.ipynb` is a thin, executed report.
+
+## Experiment map
+
+| Block | Packaged workflow | Main outputs |
+|---|---|---|
+| E0--E2B | `run_spectral_transfer_study` | dense/FFT error, transfer bounds, fine-grid residuals, Arnoldi diagnostics |
+| E4 | `run_geometry_resolution_study` | geometry resolution, control certificate and fine-grid classification |
+| E6 | `run_volume_averaging_study` | exact volume diagnostics and centre-vs-average comparison |
+| E5 | `run_ensemble_transfer_study` | ensemble localization, robust indicators and fine-grid comparison |
+| E3/E3b | `run_wave_number_phase_study` | detailed phase map, article projection, PPW diagnostics and boundary Arnoldi |
+| all | `run_spectral_experiment_suite` | one manifest and all E0--E6 artifacts |
+
+E6 and E5 consume the spectra already computed by E4. They do not repeat the
+same centre-sampled eigensolutions.
+
+## Phase semantics
+
+The raw wave-number results distinguish:
+
+- `converged`: the requested residual tolerance was reached;
+- `contracting_unresolved`: an asymptotic contraction was observed but the
+  requested tolerance was not reached in the allotted iterations;
+- `unstable`;
+- `unresolved`;
+- `nonfinite`;
+- `no_parameter`.
+
+The historical three-state diagram is exported separately in
+`article_phase_code`. It is a declared projection, not the primary numerical
+classification.
 
 ## Compatibility
 
@@ -29,28 +59,36 @@ solver constructors remain available. New code should use:
 - `Operator.to_dense_kernel()` for `B`;
 - `Operator.to_dense_operator()` for `A = I - B chi`.
 
-The historical `gamma0.coarse_operator_matrix()` still uses nearest-cell
-resampling for backward compatibility. New inter-grid experiments rebuild every
+The historical `gamma0.coarse_operator_matrix()` retains nearest-cell
+resampling for backward compatibility. New inter-grid experiments rebuild each
 grid independently from `SpectralCaseDefinition`.
 
 ## Running
 
-Quick CPU smoke run:
+Core quick CPU run:
 
 ```bash
 python -m experiments.em_spectral.cli \
-  --mode quick --device cpu --no-fine --no-arnoldi
+  --mode quick --device cpu --study core --no-arnoldi
+```
+
+Complete quick run with dissertation figures:
+
+```bash
+python -m experiments.em_spectral.cli \
+  --mode quick --device cpu --study all --no-arnoldi --figures
 ```
 
 Publication configuration:
 
 ```bash
 python -m experiments.em_spectral.cli \
-  --mode publication --device auto
+  --mode publication --device auto --study all --figures
 ```
 
-The run creates a versioned `manifest.json`, CSV tables, compressed spectra,
-residual histories and Arnoldi Hessenberg matrices.
+The complete run creates one `manifest.json`, CSV tables, compressed spectra,
+residual histories, Arnoldi Hessenberg matrices where requested, and PNG/PDF/SVG
+figures.
 
 ## Notebook code for the dissertation appendix
 
@@ -60,13 +98,5 @@ python tools/export_notebook_code.py \
   appendix/em-spectral-transfer.py
 ```
 
-The export contains code cells only, stable cell boundary markers and the
+The export contains code cells only, stable cell-boundary markers and the
 SHA-256 hash of the source notebook.
-
-## Scope of this commit
-
-The commit provides the common implementation required by E0, E1, E2 and
-E2A/E2B and the geometry/sampling and ensemble primitives needed by E3-E6.
-The publication-scale parameter sweeps and their final dissertation figures
-should be migrated as a separate experiment-only commit after regression
-comparison with the saved version-8b notebook outputs.

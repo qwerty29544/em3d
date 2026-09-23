@@ -132,6 +132,29 @@ class ArtifactStore:
         np.savez_compressed(path, **arrays)
         return self._record(path, "npz")
 
+    def save_figure(
+        self,
+        relative_stem: str | Path,
+        figure,
+        *,
+        formats: tuple[str, ...] = ("png", "pdf", "svg"),
+        dpi: int = 180,
+    ) -> tuple[Path, ...]:
+        """Save one figure in portable preview and vector formats."""
+
+        stem = self.root / relative_stem
+        stem.parent.mkdir(parents=True, exist_ok=True)
+        paths: list[Path] = []
+        for extension in formats:
+            normalized = extension.lower().lstrip(".")
+            path = stem.with_suffix(f".{normalized}")
+            options = {"bbox_inches": "tight"}
+            if normalized == "png":
+                options["dpi"] = dpi
+            figure.savefig(path, **options)
+            paths.append(self._record(path, normalized))
+        return tuple(paths)
+
     def finalize(self, *, config: Any, status: str = "complete") -> Path:
         config_digest = hashlib.sha256(_stable_json_bytes(config)).hexdigest()
         manifest = {

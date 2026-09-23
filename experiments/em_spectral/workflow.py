@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Iterable
 
-import numpy as np
-
-from em3d.backend import Backend
-from em3d.dtypes import Precision
 from em3d.experiments.spectral_transfer import (
-    BuiltSpectralCase,
     ControlTransferRun,
     FineTransferRun,
     GridSpectrumRun,
@@ -22,10 +17,19 @@ from em3d.experiments.spectral_transfer import (
     run_parameter_transfer,
 )
 from em3d.operator import PreparedEMKernel
-from em3d.solvers import SolverConfig
 from em3d.spectral import ArnoldiResult, CircleLocalization
 
 from .artifacts import ArtifactStore
+from .common import (
+    cpu_backend,
+    fine_row,
+    hierarchy_levels,
+    localization_row,
+    make_backend,
+    study_solver_config,
+    transfer_row,
+    write_spectrum,
+)
 from .config import SpectralStudyConfig
 
 
@@ -46,108 +50,25 @@ class SpectralStudyResult:
     output_root: str
 
 
-def make_backend(config: SpectralStudyConfig) -> Backend:
-    precision = (
-        Precision.SINGLE
-        if config.runtime.precision == "single"
-        else Precision.DOUBLE
-    )
-    if config.runtime.device == "cpu":
-        return Backend.numpy(precision)
-    if config.runtime.device == "cuda":
-        return Backend.cupy(precision)
-    return Backend.auto(precision)
-
-
-def _localization_row(run: GridSpectrumRun) -> dict:
-    circle = run.localization.circle
-    return {
-        "case": run.case_key,
-        "N": run.grid_shape[0],
-        "matrix_dimension": run.matrix_dimension,
-        "status": run.localization.status.value,
-        "origin_in_hull": run.localization.origin_in_hull,
-        "origin_distance": run.localization.origin_distance,
-        "mu_real": circle.mu.real if circle else np.nan,
-        "mu_imag": circle.mu.imag if circle else np.nan,
-        "radius": circle.radius if circle else np.nan,
-        "q": circle.q if circle else np.nan,
-        "margin": circle.margin if circle else np.nan,
-        "feature_cells": run.geometry.cells_total,
-        "feature_cells_x": run.geometry.cells_per_axis[0],
-        "feature_cells_y": run.geometry.cells_per_axis[1],
-        "feature_cells_z": run.geometry.cells_per_axis[2],
-        "feature_volume_error": run.geometry.relative_volume_error,
-        "build_seconds": run.matrix_build_seconds,
-        "eig_seconds_median": run.median_eigenvalue_seconds,
-    }
-
-
-def _transfer_row(run: ControlTransferRun) -> dict:
-    assessment = run.assessment
-    row = {
-        "case": run.coarse.case_key,
-        "N_H": run.coarse.grid_shape[0],
-        "N_c": run.target.grid_shape[0],
-        "parameter_exists": assessment is not None,
-        "coarse_status": run.coarse.localization.status.value,
-    }
-    if assessment is None:
-        row.update({
-            "epsilon_directed": np.nan,
-            "epsilon_hausdorff": np.nan,
-            "q_H": np.nan,
-            "Delta_H": np.nan,
-            "eta": np.nan,
-            "q_c_mu_H": np.nan,
-            "q_bound_c": np.nan,
-            "certified": False,
-        })
-    else:
-        row.update({
-            "epsilon_directed": assessment.directed_error,
-            "epsilon_hausdorff": assessment.hausdorff_distance,
-            "q_H": assessment.coarse_factor,
-            "Delta_H": assessment.coarse_margin,
-            "eta": assessment.normalized_error,
-            "q_c_mu_H": assessment.target_factor,
-            "q_bound_c": assessment.target_factor_bound,
-            "certified": assessment.certified,
-        })
-    return row
-
-
-def _fine_row(run: FineTransferRun) -> dict:
-    return {
-        "case": run.case_key,
-        "parameter": run.parameter_label,
-        "mu_real": run.circle.mu.real,
-        "mu_imag": run.circle.mu.imag,
-        "q_H": run.circle.q,
-        "converged": run.solver_result.converged,
-        "status": run.solver_result.status,
-        "iterations": run.solver_result.iterations,
-        "matvec_count": run.solver_result.matvec_count,
-        "final_residual": run.convergence.final_residual,
-        "minimum_residual": run.convergence.minimum_residual,
-        "asymptotic_ratio": run.convergence.asymptotic_ratio,
-        "classification": run.convergence.classification.value,
-        "elapsed_seconds": run.elapsed_seconds,
-    }
-
-
 def run_spectral_transfer_study(
     config: SpectralStudyConfig,
     *,
     cases: Iterable[SpectralCaseDefinition] | None = None,
     include_fine: bool = True,
     include_arnoldi: bool = True,
+    store: ArtifactStore | None = None,
+    finalize: bool = True,
+    write_config: bool = True,
 ) -> SpectralStudyResult:
     definitions = tuple(default_article_cases() if cases is None else cases)
-    store = ArtifactStore(config.output_root)
-    store.write_json("config.json", config)
+    owns_store = store is None
+    if store is None:
+        store = ArtifactStore(config.output_root)
+    if write_config:
+        store.write_json("config.json", config)
 
-    cpu_backend = Backend.numpy(Precision.DOUBLE)
+    dense_backend = make_backend(config)
+    consistency_backend = cpu_backend(config)
     work_backend = make_backend(config)
     results: list[CaseStudyResult] = []
     localization_rows: list[dict] = []
@@ -155,36 +76,32 @@ def run_spectral_transfer_study(
     fine_rows: list[dict] = []
     arnoldi_rows: list[dict] = []
     consistency_rows: list[dict] = []
+    levels = hierarchy_levels(config)
 
     for definition in definitions:
         spectra: dict[int, GridSpectrumRun] = {}
-        levels = tuple(
-            sorted(
-                set(config.grids.coarse_sizes + (config.grids.control_size,))
-            )
-        )
         for level in levels:
             built = build_spectral_case(
                 definition,
                 grid_shape=level,
-                backend=cpu_backend,
+                backend=dense_backend,
             )
             run = compute_grid_spectrum(
                 built,
                 eigenvalue_repeats=config.eigenvalue_repeats,
             )
             spectra[level] = run
-            localization_rows.append(_localization_row(run))
-            store.write_npz(
+            localization_rows.append(localization_row(run))
+            write_spectrum(
+                store,
                 f"raw/spectra/{definition.key}_N{level}.npz",
-                spectrum=run.localization.spectrum,
-                hull=run.localization.hull,
+                run,
             )
 
         smallest = build_spectral_case(
             definition,
             grid_shape=config.grids.coarse_sizes[0],
-            backend=cpu_backend,
+            backend=consistency_backend,
         )
         consistency_error = check_operator_consistency(
             smallest,
@@ -204,7 +121,7 @@ def run_spectral_transfer_study(
             assess_control_transfer(spectra[level], control)
             for level in config.grids.coarse_sizes
         )
-        transfer_rows.extend(_transfer_row(item) for item in transfers)
+        transfer_rows.extend(transfer_row(item) for item in transfers)
 
         fine_runs: tuple[FineTransferRun, ...] = ()
         arnoldi_runs: dict[str, ArnoldiResult] = {}
@@ -226,14 +143,11 @@ def run_spectral_transfer_study(
             fine_runs = run_parameter_transfer(
                 fine_case,
                 parameters,
-                solver_config=SolverConfig(
-                    max_iter=config.iteration.max_iter,
-                    rtol=config.iteration.rtol,
-                    divergence_guard=config.iteration.divergence_guard,
-                ),
+                solver_config=study_solver_config(config),
                 prepared_kernel=prepared,
+                retain_solution=False,
             )
-            fine_rows.extend(_fine_row(item) for item in fine_runs)
+            fine_rows.extend(fine_row(item) for item in fine_runs)
             for run in fine_runs:
                 store.write_json(
                     f"raw/residual_histories/{definition.key}_{run.parameter_label}.json",
@@ -286,9 +200,18 @@ def run_spectral_transfer_study(
         store.write_rows("tables/fine_transfers.csv", fine_rows)
     if arnoldi_rows:
         store.write_rows("tables/arnoldi.csv", arnoldi_rows)
-    store.finalize(config=config)
+    if finalize:
+        store.finalize(config=config)
     return SpectralStudyResult(
         config=config,
         cases=tuple(results),
-        output_root=str(config.output_root),
+        output_root=str(store.root),
     )
+
+
+__all__ = [
+    "CaseStudyResult",
+    "SpectralStudyResult",
+    "make_backend",
+    "run_spectral_transfer_study",
+]

@@ -495,7 +495,7 @@ $$B_{ij} = \begin{cases} \displaystyle\int_0^{r_0} e^{ik_0 r}\,r\,dr, & i = j \\
 Матрица $\mathbf{B}$ является трёхуровневой блочно-тёплицевой: каждый блок — диадическая матрица 3×3. Вложение в удвоенную решётку $\Pi_2 = [0,\,2L]^3$ делает оператор блочно-циркулянтным; матвек становится:
 
 $$(\mathbf{B}\boldsymbol{\eta}\mathbf{u})_i =
-\mathrm{IFFT}\!\left[
+\mathrm{IFFT}\left[
 \sum_{j=1}^{3}\hat{K}_{ij}\,
 \mathrm{FFT}(\text{zero-pad}((\boldsymbol{\eta}\mathbf{u})_j))
 \right]_{i},\quad i=1,2,3.$$
@@ -516,14 +516,6 @@ $$\mathbf{u}^{(k+1)} = \mathbf{u}^{(k)} - \gamma_0\!\left(\mathbf{A}\mathbf{u}^{
 1. Алгоритм Эндрю (монотонная цепь) для выпуклой оболочки точек $\{\lambda_k\} \subset \mathbb{C}$.
 2. Перебор пар и троек вершин для поиска допустимой окружности минимального угла видимости из начала координат.
 3. Проверку, что $0 \notin$ МОО (иначе $\gamma_0$ не определён).
-
-### Двухшаговый метод (TwoStep)
-
-Минимизирует $\|\mathbf{A}\mathbf{u} - \mathbf{f}\|^2$ методом наискорейшего спуска:
-
-$$\mathbf{p}^{(k)} = \mathbf{A}^\dagger\,\mathbf{r}^{(k)}, \qquad \tau_k = \frac{\|\mathbf{p}^{(k)}\|^2}{\|\mathbf{A}\mathbf{p}^{(k)}\|^2}, \qquad \mathbf{u}^{(k+1)} = \mathbf{u}^{(k)} - \tau_k\,\mathbf{p}^{(k)}$$
-
-где $\mathbf{r}^{(k)} = \mathbf{A}\mathbf{u}^{(k)} - \mathbf{f}$.
 
 ---
 
